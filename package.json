@@ -1,0 +1,135 @@
+{
+  "name": "forge-sentinel",
+  "displayName": "FORGE//SENTINEL",
+  "description": "Repository-intelligent, safety-first AI coding agent for Visual Studio Code",
+  "version": "1.0.0",
+  "publisher": "TechfestIITBombay",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20.0.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Education"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --watch",
+    "compile": "tsc -p ./",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@truefoundry/trueforge-sdk": "file:../trueforge/packages/trueforge-sdk",
+    "diff": "^7.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.0",
+    "@types/node": "^24.13.3",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.0"
+  },
+  "activationEvents": [
+    "onView:forge-sentinel.agentPanel",
+    "onCommand:forge-sentinel.inlineEdit",
+    "onCommand:forge-sentinel.openPanel",
+    "onCommand:forge-sentinel.indexWorkspace",
+    "onCommand:forge-sentinel.reviewDiffs"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forge-sentinel-container",
+          "title": "FORGE//SENTINEL",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "forge-sentinel-container": [
+        {
+          "type": "webview",
+          "id": "forge-sentinel.agentPanel",
+          "name": "Sentinel Command Center"
+        },
+        {
+          "id": "forge-sentinel.flightRecorder",
+          "name": "Flight Recorder & Audit"
+        },
+        {
+          "id": "forge-sentinel.stagedPatches",
+          "name": "Staged Patches (Review)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "forge-sentinel.inlineEdit",
+        "title": "Sentinel: Inline Surgical Edit",
+        "category": "FORGE//SENTINEL"
+      },
+      {
+        "command": "forge-sentinel.openPanel",
+        "title": "Sentinel: Open Command Center",
+        "category": "FORGE//SENTINEL"
+      },
+      {
+        "command": "forge-sentinel.indexWorkspace",
+        "title": "Sentinel: Run Codebase MRI Scan",
+        "category": "FORGE//SENTINEL"
+      },
+      {
+        "command": "forge-sentinel.reviewDiffs",
+        "title": "Sentinel: Review Staged Patches",
+        "category": "FORGE//SENTINEL"
+      },
+      {
+        "command": "forge-sentinel.cancelTurn",
+        "title": "Sentinel: Cancel Running Agent Turn",
+        "category": "FORGE//SENTINEL"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "forge-sentinel.inlineEdit",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "FORGE//SENTINEL",
+      "properties": {
+        "forgeSentinel.trueforgeUrl": {
+          "type": "string",
+          "default": "http://localhost:8790",
+          "description": "Base URL of the local TrueForge agent harness server."
+        },
+        "forgeSentinel.trueforgeToken": {
+          "type": "string",
+          "default": "trueforge-standalone",
+          "description": "Authorization token for the local TrueForge server."
+        },
+        "forgeSentinel.contextBudgetTokens": {
+          "type": "number",
+          "default": 16000,
+          "description": "Maximum token budget for Context Auction retrieval."
+        },
+        "forgeSentinel.autoRunTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically discover and execute tests in Proof-Carrying Code engine."
+        }
+      }
+    }
+  }
+}

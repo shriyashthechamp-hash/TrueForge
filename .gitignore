@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and compilation outputs
+dist/
+out/
+build/
+*.vsix
+*.tsbuildinfo
+
+# Local Environment and Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Logs & Runtime State
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.trueforge/
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+.vscode-test/
+
+# System and Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.claude/
+.cursor/
+
+# Temporary files
+tmp/
+temp/

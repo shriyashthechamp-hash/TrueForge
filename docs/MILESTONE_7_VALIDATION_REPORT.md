@@ -82,12 +82,12 @@
 ### Benchmark Task B: Autonomous Multi-File Agent Mode
 - **Requirement**: Add a new built-in CLI command `flask config` that prints the loaded application's configuration as JSON, masking keys containing `SECRET`, `PASSWORD`, `TOKEN`, `KEY` as `'***'`. Must appear in `flask --help`, be tested, and documented across at least 3 files.
 - **Files Modified**:
-  1. `src/flask/cli.py`: Defined `config_command` with sensitive key masking and registered in `FlaskGroup.__init__`.
-  2. `tests/test_cli.py`: Added `test_config_command(runner)` verifying exit code 0, JSON format, and masking.
+  1. `src/flask/cli.py`: Defined `config_command` with recursive sensitive key masking (`_mask_value`) for nested dictionaries and collections, registered in `FlaskGroup.__init__`.
+  2. `tests/test_cli.py`: Added comprehensive `test_config_command(runner)` verifying exit code 0, JSON format, recursive masking across nested dicts, lists, and multi-level hierarchies.
   3. `docs/cli.rst`: Added user-facing documentation under "Show the Configuration".
 - **Verification Evidence**:
   - `flask --help`: `config` command appears under `Commands:` with description `"Show the application configuration."`
-  - `pytest tests/test_cli.py -k "test_config_command"`: **1 passed in 0.01s**.
+  - `pytest tests/test_cli.py`: **56 passed, 3 skipped in 0.10s**.
   - `git status --porcelain`: Confirms exactly 3 modified files in Flask testbed.
 
 ### Benchmark Task C: Resilience & Failure Recovery

@@ -175,64 +175,14 @@ print("SUCCESS_ALL_PASSED")
     // 1. cli.py
     const cliPath = path.join(workspaceRoot, 'src/flask/cli.py');
     const cliContent = await fs.readFile(cliPath, 'utf8');
-    if (!cliContent.includes('def config_command')) {
-      const configCmdCode = `
-@click.command("config", short_help="Show the application configuration.")
-@click.option("--json", "as_json", is_flag=True, default=True, help="Print configuration as JSON.")
-@with_appcontext
-def config_command(as_json: bool) -> None:
-    """Print the application's configuration.
-
-    Keys containing SECRET, PASSWORD, TOKEN, or KEY have their values
-    masked as '***'.
-    """
-    import json
-    from flask import current_app
-
-    masked = {}
-    for key, value in sorted(current_app.config.items()):
-        upper_key = key.upper()
-        if any(secret in upper_key for secret in ("SECRET", "PASSWORD", "TOKEN", "KEY")):
-            masked[key] = "***"
-        else:
-            try:
-                json.dumps(value)
-                masked[key] = value
-            except (TypeError, OverflowError):
-                masked[key] = str(value)
-
-    click.echo(json.dumps(masked, indent=2))
-
-
-cli.add_command(config_command)
-`;
-      await fs.writeFile(cliPath, cliContent + '\n' + configCmdCode, 'utf8');
-    }
+    expect(cliContent).toContain('def config_command');
+    expect(cliContent).toContain('_mask_value');
 
     // 2. tests/test_cli.py
     const testCliPath = path.join(workspaceRoot, 'tests/test_cli.py');
     const testCliContent = await fs.readFile(testCliPath, 'utf8');
-    if (!testCliContent.includes('test_config_command')) {
-      const testCode = `
-def test_config_command(runner):
-    app = Flask("test_config")
-    app.config["MY_SECRET_KEY"] = "super-secret"
-    app.config["API_TOKEN"] = "token123"
-    app.config["DB_PASSWORD"] = "pass456"
-    app.config["PUBLIC_SETTING"] = "visible"
-
-    cli = FlaskGroup(create_app=lambda: app)
-    result = runner.invoke(cli, ["config"])
-    assert result.exit_code == 0
-    import json
-    data = json.loads(result.output)
-    assert data["MY_SECRET_KEY"] == "***"
-    assert data["API_TOKEN"] == "***"
-    assert data["DB_PASSWORD"] == "***"
-    assert data["PUBLIC_SETTING"] == "visible"
-`;
-      await fs.writeFile(testCliPath, testCliContent + '\n' + testCode, 'utf8');
-    }
+    expect(testCliContent).toContain('test_config_command');
+    expect(testCliContent).toContain('DATABASE_CONFIG');
 
     // 3. docs/cli.rst
     const docsPath = path.join(workspaceRoot, 'docs/cli.rst');

@@ -213,3 +213,4 @@ The repository now includes automated, deterministic demonstration scripts in `s
 ## 9. CONCLUSION
 
 Milestone 8 transforms FORGE//SENTINEL into a hardened, polished developer tool ready for the Techfest IIT Bombay × TrueFoundry Forge-a-thon. Every interaction is intentional, every proposed edit is staged and reviewable, every claim is supported by actual terminal evidence, and the user remains in complete control throughout execution.
+

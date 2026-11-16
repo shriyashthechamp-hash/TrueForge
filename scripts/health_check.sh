@@ -35,12 +35,18 @@ else
     echo -e "    Start with: NETWORK_POLICY_ENABLED=false node trueforge/packages/trueforge/dist/cli.js --port 8790"
 fi
 
-# Check 2: Configured Models
-echo -e "\n${COLOR_BLUE}[2/${TOTAL_CHECKS}] Checking Configured LLM Models inside TrueForge...${COLOR_RESET}"
+# Check 2: Configured Models & Live Inference Probe
+echo -e "\n${COLOR_BLUE}[2/${TOTAL_CHECKS}] Checking Configured LLM Models & Live Inference Probe...${COLOR_RESET}"
 MODELS_JSON=$(curl -s -H "Authorization: Bearer trueforge-standalone" http://localhost:8790/api/v1/models 2>/dev/null || echo "{}")
 if echo "${MODELS_JSON}" | grep -q "qwen"; then
-    echo -e "  ${COLOR_GREEN}✓ Groq Qwen model (qwen-3-8-27b) is CONFIGURED and ACTIVE.${COLOR_RESET}"
-    PASSED_COUNT=$((PASSED_COUNT + 1))
+    echo -e "  ${COLOR_GREEN}✓ Groq Qwen model (qwen-3-8-27b) is CONFIGURED.${COLOR_RESET}"
+    echo -e "  Testing live model inference turn through TrueForge..."
+    if cd "${SENTINEL_ROOT}" && npx vitest run tests/agent/TrueForgeHarnessClient.test.ts >/dev/null 2>&1; then
+        echo -e "  ${COLOR_GREEN}✓ Live inference probe SUCCESSFUL (real Groq streaming verified).${COLOR_RESET}"
+        PASSED_COUNT=$((PASSED_COUNT + 1))
+    else
+        echo -e "  ${COLOR_YELLOW}⚠ Model configured but live turn probe timed out or failed.${COLOR_RESET}"
+    fi
 elif echo "${MODELS_JSON}" | grep -q "groq"; then
     echo -e "  ${COLOR_GREEN}✓ Groq Provider is ACTIVE.${COLOR_RESET}"
     PASSED_COUNT=$((PASSED_COUNT + 1))

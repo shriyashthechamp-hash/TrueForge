@@ -48,3 +48,4 @@ describe('FlightRecorder & ProofOfChange (System 04 & 06)', () => {
     expect(report.remainingRisks.length).toBeGreaterThan(0);
   });
 });
+

@@ -88,8 +88,9 @@ export class TrueForgeHarnessClient {
   }): Promise<string> {
     const configuredModels = await this.listConfiguredModels();
     const preferredModel =
-      configuredModels.find((m) => m.includes('gpt-oss-120b') || m.includes('qwen') || m.includes('groq')) ||
-      (configuredModels.length > 0 ? configuredModels[0] : 'groq/gpt-oss-120b');
+      configuredModels.find((m) => m.includes('qwen-3-8-27b') || m.includes('qwen')) ||
+      configuredModels.find((m) => m.includes('llama-3-1-8b') || m.includes('gpt-oss')) ||
+      (configuredModels.length > 0 ? configuredModels[0] : 'groq/qwen-3-8-27b');
     const selectedModel = options?.modelName || preferredModel;
 
     const instructions =
@@ -216,7 +217,7 @@ Execute tests via run_test_command to verify your work.`;
       for await (const event of stream) {
         switch (event.type) {
           case 'turn.created': {
-            currentTurnId = event.id;
+            currentTurnId = (event as any).turnId ?? event.id;
             break;
           }
 

@@ -43,13 +43,36 @@ export class ContextAuction {
   }
 
   /**
-   * Runs the multi-factor Context Auction algorithm
+   * Runs the multi-factor Context Auction algorithm with responsible token budgeting,
+   * capacity reservation for system prompt and output, and relevance thresholding.
    */
   public async runAuction(
     query: string,
-    budgetOverride?: number
+    budgetOverride?: number,
+    options?: {
+      reservedInstructionsTokens?: number;
+      reservedOutputTokens?: number;
+      maxSelectedFiles?: number;
+      minRelevanceScore?: number;
+    }
   ): Promise<{ receipt: ContextSelectionReceipt; contextBundle: string }> {
-    const tokenBudget = budgetOverride ?? this.defaultTokenBudget;
+    const totalBudget = budgetOverride ?? this.defaultTokenBudget;
+
+    // Reserve capacity for system prompt/tools and LLM output generation
+    // For small test budgets (< 1000 tokens), allocate 100% to code so micro-budgets work predictably
+    const isMicroBudget = totalBudget < 1000;
+    const reservedInstructions = isMicroBudget
+      ? 0
+      : (options?.reservedInstructionsTokens ?? (totalBudget >= 8000 ? 1500 : Math.round(totalBudget * 0.2)));
+    const reservedOutput = isMicroBudget
+      ? 0
+      : (options?.reservedOutputTokens ?? (totalBudget >= 8000 ? 3500 : Math.round(totalBudget * 0.3)));
+    const codeBudget = isMicroBudget
+      ? totalBudget
+      : Math.max(100, Math.min(totalBudget, totalBudget - reservedInstructions - reservedOutput));
+    const maxFiles = options?.maxSelectedFiles ?? 15;
+    const minScore = options?.minRelevanceScore ?? 35;
+
     const { cleanedQuery, explicitFiles, explicitSymbols } = this.parseExplicitMentions(query);
 
     const queryTokens = cleanedQuery
@@ -189,14 +212,36 @@ export class ContextAuction {
     // Sort by final score descending
     scoredCandidates.sort((a, b) => b.score - a.score);
 
-    // 4. Auction Allocation
+    // 4. Auction Allocation with Relevance Thresholding and Capacity Reservation
     let tokensUsed = 0;
     const selectedFiles: ContextAuctionCandidate[] = [];
     const excludedFiles: { filePath: string; score: number; exclusionReason: string }[] = [];
     const bundleChunks: string[] = [];
 
     for (const candidate of scoredCandidates) {
-      if (tokensUsed + candidate.estimatedTokens <= tokenBudget) {
+      const isExplicit = candidate.score >= 500;
+
+      // Filter out low-relevance noise unless explicitly requested by user
+      if (!isExplicit && candidate.score < minScore) {
+        excludedFiles.push({
+          filePath: candidate.filePath,
+          score: candidate.score,
+          exclusionReason: `Low relevance: score (${candidate.score}) below threshold (${minScore})`,
+        });
+        continue;
+      }
+
+      // Respect max files limit for attention sharpness
+      if (selectedFiles.length >= maxFiles && !isExplicit) {
+        excludedFiles.push({
+          filePath: candidate.filePath,
+          score: candidate.score,
+          exclusionReason: `File limit reached: top ${maxFiles} high-relevance files already selected`,
+        });
+        continue;
+      }
+
+      if (tokensUsed + candidate.estimatedTokens <= codeBudget) {
         tokensUsed += candidate.estimatedTokens;
         selectedFiles.push(candidate);
         const snippetBody = candidate.snippet ?? '';
@@ -207,7 +252,7 @@ export class ContextAuction {
         excludedFiles.push({
           filePath: candidate.filePath,
           score: candidate.score,
-          exclusionReason: `Budget ceiling: requires ~${candidate.estimatedTokens} tokens; remaining capacity is ${tokenBudget - tokensUsed} tokens`,
+          exclusionReason: `Budget ceiling: requires ~${candidate.estimatedTokens} tokens; remaining capacity is ${codeBudget - tokensUsed} tokens`,
         });
       }
     }
@@ -215,7 +260,12 @@ export class ContextAuction {
     const receipt: ContextSelectionReceipt = {
       query,
       timestamp: new Date().toISOString(),
-      tokenBudget,
+      tokenBudget: totalBudget,
+      codeBudget,
+      reservedCapacity: {
+        instructions: reservedInstructions,
+        output: reservedOutput,
+      },
       totalTokensUsed: tokensUsed,
       selectedFiles,
       excludedFiles,

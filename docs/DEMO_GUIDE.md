@@ -156,3 +156,4 @@ cd /Users/shriyasdeshmukh/True_Forge_IIT_BOM/FORGE-SENTINEL
 4. Sentinel's SHA-256 conflict detection rejects the patch with:
    `Error: File src/flask/cli.py has been modified externally since patch generation.`
    Preventing silent overwrites and code corruption.
+

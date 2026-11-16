@@ -172,3 +172,4 @@ cd /path/to/workspace/FORGE-SENTINEL
    **File > Open Folder... > `/path/to/workspace/flask`**.
 5. Click the **Sentinel** shield icon in the Activity Bar to open the **Sentinel Command Center**.
 6. Press `Cmd+Shift+K` (macOS) or `Ctrl+Shift+K` (Windows/Linux) in any file to trigger **Inline Surgical Edit**.
+

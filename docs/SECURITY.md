@@ -113,3 +113,4 @@ Every action executed by FORGE//SENTINEL is recorded in the **Flight Recorder** 
 - Proof-of-Change verification reports.
 
 The audit log is stored locally within `.sentinel/flight_recorder.json` and is never transmitted to external telemetry servers.
+

@@ -38,6 +38,11 @@ export interface ContextSelectionReceipt {
   query: string;
   timestamp: string;
   tokenBudget: number;
+  codeBudget?: number;
+  reservedCapacity?: {
+    instructions: number;
+    output: number;
+  };
   totalTokensUsed: number;
   selectedFiles: ContextAuctionCandidate[];
   excludedFiles: {
@@ -111,9 +116,12 @@ export type AgentExecutionStep =
   | "staging"
   | "reviewing"
   | "testing"
+  | "completed"
   | "proven"
   | "error"
-  | "cancelled";
+  | "failed"
+  | "cancelled"
+  | "unverified";
 
 export interface ProofOfChangeReport {
   taskId: string;
@@ -135,7 +143,7 @@ export interface ProofOfChangeReport {
   skippedOrFailedChecks: string[];
   remainingRisks: string[];
   unverifiedBehavior: string[];
-  status: "success" | "partial" | "failed" | "unverified";
+  status: "success" | "partial" | "failed" | "unverified" | "read_only_completed";
   generatedAt: string;
 }
 

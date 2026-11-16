@@ -6,6 +6,8 @@ import type { CodebaseMri } from '../context/CodebaseMri.js';
 import type { ContextAuction } from '../context/ContextAuction.js';
 import type { PatchStagingManager } from '../diff/PatchStagingManager.js';
 import type { FlightRecorder } from '../flight-recorder/FlightRecorder.js';
+import type { StagedPatchesTreeDataProvider } from './StagedPatchesTreeDataProvider.js';
+import type { FlightRecorderTreeDataProvider } from './FlightRecorderTreeDataProvider.js';
 import type { AgentExecutionStep, ProofOfChangeReport } from '../shared/types.js';
 
 export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
@@ -21,7 +23,9 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     private readonly mri: CodebaseMri,
     private readonly auction: ContextAuction,
     private readonly trueforge: TrueForgeHarnessClient,
-    private readonly flightRecorder: FlightRecorder
+    private readonly flightRecorder: FlightRecorder,
+    private readonly stagedPatchesTreeProvider?: StagedPatchesTreeDataProvider,
+    private readonly flightRecorderTreeProvider?: FlightRecorderTreeDataProvider
   ) {}
 
   public resolveWebviewView(
@@ -86,14 +90,19 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   private async updateConnectionStatus(): Promise<void> {
     try {
       const health = await this.trueforge.checkHealth();
-      const models = await this.trueforge.listConfiguredModels();
-      const preferredModel = models.find((m) => m.includes('qwen') || m.includes('groq')) ?? (models[0] || 'groq/qwen-3-8-27b');
+      const authoritative = await this.trueforge.resolveAuthoritativeModel();
+      const models = await this.trueforge.getAvailableModels();
       this._view?.webview.postMessage({
         type: 'statusUpdate',
         connected: true,
         version: health.version ?? '0.0.0',
-        activeModel: preferredModel,
-        models,
+        activeModel: authoritative.displayName,
+        modelName: authoritative.name,
+        models: models.map((m) => ({
+          name: m.name,
+          displayName: m.displayName,
+          isAvailable: m.isAvailable,
+        })),
       });
     } catch {
       this._view?.webview.postMessage({
@@ -138,10 +147,21 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     this._view?.webview.postMessage({ type: 'turnStarted' });
     this.postExecutionStep('understanding');
 
+    let accumulatedTokens = 0;
+
     try {
       this.postExecutionStep('retrieving');
       this._view?.webview.postMessage({ type: 'log', message: 'Context Auction: Evaluating repository relevance and token budget...' });
-      const { receipt, contextBundle } = await this.auction.runAuction(promptText, 16000);
+
+      const config = vscode.workspace.getConfiguration('forgeSentinel');
+      const configuredBudget = config.get<number>('contextBudgetTokens', 16000);
+
+      const { receipt, contextBundle } = await this.auction.runAuction(promptText, configuredBudget, {
+        reservedInstructionsTokens: 1500,
+        reservedOutputTokens: 3500,
+        maxSelectedFiles: 15,
+        minRelevanceScore: 30,
+      });
 
       this.flightRecorder.setContextSelectionMetadata(
         receipt.selectedFiles.map((f) => ({
@@ -157,9 +177,12 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       });
 
       this.postExecutionStep('planning');
-      this._view?.webview.postMessage({ type: 'log', message: 'Initializing TrueForge autonomous turn...' });
+      this._view?.webview.postMessage({ type: 'log', message: 'Resolving authoritative model and starting TrueForge agent turn...' });
+
+      const authoritative = await this.trueforge.resolveAuthoritativeModel();
 
       this.activeSessionId = await this.trueforge.createSession({
+        modelName: authoritative.name,
         instructions: `You are FORGE//SENTINEL, an expert autonomous coding agent.
 Core philosophy: "Understand First. Plan Intelligently. Change Precisely. Prove Everything."
 To inspect code: search_workspace, find_symbol, read_file, inspect_file_structure.
@@ -175,6 +198,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         fullPrompt,
         {
           onTokenDelta: (delta) => {
+            accumulatedTokens += delta.length;
             this._view?.webview.postMessage({ type: 'tokenDelta', delta });
           },
           onToolCall: (call) => {
@@ -189,16 +213,51 @@ Always explain the purpose, rationale, and expected impact of any changes before
             }
             this._view?.webview.postMessage({ type: 'toolCall', call });
             this.flightRecorder.record('tool_call', `Agent invoked tool: ${call.name}`, { ...call });
+            this.flightRecorderTreeProvider?.refresh();
           },
           onToolResponse: (resp) => {
             this._view?.webview.postMessage({ type: 'toolResponse', resp });
             this.flightRecorder.record('tool_result', `Tool completed`, { ...resp });
             this.refreshStagedPatchesUI();
+            this.flightRecorderTreeProvider?.refresh();
           },
           onTurnComplete: (result) => {
-            this.postExecutionStep('proven');
+            const isError = result.status === 'failed' || Boolean(result.error);
+            const staged = this.patchManager.getAllStaged();
+            const applied = staged.filter((p) => p.status === 'applied');
+
+            if (isError) {
+              this.postExecutionStep('failed');
+              this._view?.webview.postMessage({
+                type: 'error',
+                message: result.error || 'Agent turn failed during execution',
+              });
+              this._view?.webview.postMessage({ type: 'turnDone', result });
+              this.compileAndSendProofOfChange(promptText, taskId, false);
+              return;
+            }
+
+            if (staged.length > 0) {
+              if (applied.length > 0) {
+                this.postExecutionStep('proven');
+              } else {
+                this.postExecutionStep('staging');
+              }
+            } else {
+              // Read-only analysis turn with no staged file mutations
+              if (accumulatedTokens > 0) {
+                this.postExecutionStep('completed');
+              } else {
+                this.postExecutionStep('unverified');
+                this._view?.webview.postMessage({
+                  type: 'log',
+                  message: 'Notice: Agent completed turn without generating response tokens or patch proposals.',
+                });
+              }
+            }
+
             this._view?.webview.postMessage({ type: 'turnDone', result });
-            this.compileAndSendProofOfChange(promptText, taskId);
+            this.compileAndSendProofOfChange(promptText, taskId, staged.length === 0);
           },
         },
         this.currentAbortController.signal
@@ -208,7 +267,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         this.postExecutionStep('cancelled');
         this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user. Workspace state fully preserved.' });
       } else {
-        this.postExecutionStep('error');
+        this.postExecutionStep('failed');
         this._view?.webview.postMessage({ type: 'error', message: err.message });
       }
     } finally {
@@ -243,6 +302,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         hunks: p.hunks,
       })),
     });
+    this.stagedPatchesTreeProvider?.refresh();
   }
 
   private async handleReviewDiff(patchId: string): Promise<void> {
@@ -297,7 +357,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
     }
   }
 
-  private compileAndSendProofOfChange(instruction: string, taskId: string): void {
+  private compileAndSendProofOfChange(instruction: string, taskId: string, isReadOnly = false): void {
     const staged = this.patchManager.getAllStaged();
     const applied = staged.filter((p) => p.status === 'applied');
     const approvedHunks = staged.reduce((acc, p) => acc + p.hunks.filter((h) => h.accepted).length, 0);
@@ -309,6 +369,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
       patchesAccepted: applied.length,
       approvedHunksCount: approvedHunks,
       rejectedHunksCount: rejectedHunks,
+      isReadOnly,
     });
 
     this._view?.webview.postMessage({
@@ -320,6 +381,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
       type: 'timelineEvents',
       events: this.flightRecorder.getEvents(),
     });
+
+    this.flightRecorderTreeProvider?.refresh();
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -677,7 +740,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
     <div class="step-node" id="step-planning">5. Plan</div>
     <div class="step-node" id="step-staging">6. Stage</div>
     <div class="step-node" id="step-testing">7. Test</div>
+    <div class="step-node" id="step-completed" style="display: none;">8. Completed</div>
     <div class="step-node" id="step-proven">8. Proven</div>
+    <div class="step-node" id="step-failed" style="display: none;">Failed</div>
+    <div class="step-node" id="step-cancelled" style="display: none;">Cancelled</div>
   </div>
 
   <div id="chat" class="chat-container">
@@ -756,7 +822,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
             statusBadge.className = 'pill online';
             statusBadge.textContent = 'TrueForge: Online';
             if (msg.activeModel) {
-              modelPill.textContent = msg.activeModel.split('/').pop() || msg.activeModel;
+              modelPill.textContent = msg.activeModel;
             }
           } else {
             statusBadge.className = 'pill offline';
@@ -848,16 +914,44 @@ Always explain the purpose, rationale, and expected impact of any changes before
       document.querySelectorAll('.step-node').forEach(n => {
         n.classList.remove('active');
       });
-      const target = document.getElementById('step-' + step);
-      if (target) {
-        target.classList.add('active');
+
+      // Special handling for completed / proven / failed / cancelled
+      if (step === 'completed') {
+        const compNode = document.getElementById('step-completed');
+        if (compNode) {
+          compNode.style.display = 'inline-block';
+          compNode.classList.add('active');
+        }
+      } else if (step === 'failed') {
+        const failNode = document.getElementById('step-failed');
+        if (failNode) {
+          failNode.style.display = 'inline-block';
+          failNode.classList.add('active');
+        }
+      } else if (step === 'cancelled') {
+        const cancNode = document.getElementById('step-cancelled');
+        if (cancNode) {
+          cancNode.style.display = 'inline-block';
+          cancNode.classList.add('active');
+        }
+      } else {
+        const target = document.getElementById('step-' + step);
+        if (target) {
+          target.classList.add('active');
+        }
       }
     }
 
     function renderContextReceipt(r) {
       const receiptBox = document.createElement('div');
       receiptBox.className = 'receipt-box';
-      const pct = Math.min(100, Math.round((r.totalTokensUsed / r.tokenBudget) * 100));
+      const totalBudget = r.tokenBudget || 16000;
+      const codeBudget = r.codeBudget || Math.round(totalBudget * 0.7);
+      const codePct = Math.min(100, Math.round((r.totalTokensUsed / codeBudget) * 100));
+
+      const reservedDesc = r.reservedCapacity 
+        ? ' (Reserved: ' + r.reservedCapacity.instructions + ' prompt + ' + r.reservedCapacity.output + ' output)'
+        : '';
 
       let selectedList = r.selectedFiles.map(f => 
         '<li style="margin-bottom:2px;"><code>' + f.filePath + '</code> (' + f.estimatedTokens + ' tok, score: ' + f.score + ') - <em>' + escapeHtml(f.relevanceRationale) + '</em></li>'
@@ -870,10 +964,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
       receiptBox.innerHTML = 
         '<div class="receipt-title">' +
           '<span>📋 Context Selection Receipt</span>' +
-          '<span>' + r.totalTokensUsed + ' / ' + r.tokenBudget + ' tok (' + pct + '%)</span>' +
+          '<span>' + r.totalTokensUsed + ' / ' + codeBudget + ' code tok (' + codePct + '%)' + reservedDesc + '</span>' +
         '</div>' +
-        '<div class="token-meter"><div class="token-meter-fill" style="width:' + pct + '%;"></div></div>' +
-        '<details style="cursor:pointer;"><summary><strong>' + r.selectedFiles.length + ' Selected Code Contexts</strong></summary>' +
+        '<div class="token-meter"><div class="token-meter-fill" style="width:' + codePct + '%;"></div></div>' +
+        '<details style="cursor:pointer;"><summary><strong>' + r.selectedFiles.length + ' High-Relevance Selected Files</strong></summary>' +
           '<ul style="margin:4px 0; padding-left:16px;">' + selectedList + '</ul>' +
         '</details>' +
         (r.excludedFiles.length > 0 ? 
@@ -979,20 +1073,35 @@ Always explain the purpose, rationale, and expected impact of any changes before
       const box = document.createElement('div');
       box.className = 'proof-card';
 
+      let badgeStyle = 'background:#064e3b; color:#a7f3d0; border:1px solid #10b981;';
+      if (report.status === 'read_only_completed') {
+        badgeStyle = 'background:#0c4a6e; color:#bae6fd; border:1px solid #0284c7;';
+      } else if (report.status === 'failed') {
+        badgeStyle = 'background:#450a0a; color:#fecaca; border:1px solid #ef4444;';
+      } else if (report.status === 'partial') {
+        badgeStyle = 'background:#451a03; color:#fde68a; border:1px solid #d97706;';
+      } else if (report.status === 'unverified') {
+        badgeStyle = 'background:#1f2937; color:#9ca3af; border:1px solid #4b5563;';
+      }
+
       let testRows = '';
-      if (report.testResults && report.testResults.length > 0) {
+      if (report.status === 'read_only_completed') {
+        testRows = '<div style="color:#7dd3fc;">✓ Read-only architecture inquiry (test suite execution not required).</div>';
+      } else if (report.testResults && report.testResults.length > 0) {
         testRows = report.testResults.map(r => {
           const color = r.status === 'passed' ? '#34d399' : (r.status === 'failed' ? '#f87171' : '#fbbf24');
           return '<div class="test-result-row"><span>' + escapeHtml(r.testName) + '</span><strong style="color:' + color + ';">' + r.status.toUpperCase() + '</strong></div>';
         }).join('');
       } else {
-        testRows = '<div style="color:#a7f3d0;">No test executions recorded.</div>';
+        testRows = '<div style="color:#9ca3af;">No test executions recorded.</div>';
       }
+
+      const displayStatus = report.status === 'read_only_completed' ? 'READ-ONLY COMPLETED' : report.status.toUpperCase();
 
       box.innerHTML = 
         '<div class="proof-header">' +
           '<span>🛡️ Proof-Carrying Code Report</span>' +
-          '<span class="badge" style="background:#064e3b; color:#a7f3d0; border:1px solid #10b981;">' + report.status.toUpperCase() + '</span>' +
+          '<span class="badge" style="' + badgeStyle + '">' + displayStatus + '</span>' +
         '</div>' +
         '<div style="margin-bottom:6px;"><strong>Modified Files (' + report.filesModified.length + '):</strong> ' + (report.filesModified.join(', ') || 'None') + '</div>' +
         '<div style="margin-bottom:6px;"><strong>Patches:</strong> ' + report.patchesAccepted + ' accepted / ' + report.patchesProposed + ' proposed</div>' +

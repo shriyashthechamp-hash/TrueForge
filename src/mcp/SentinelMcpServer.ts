@@ -647,12 +647,28 @@ export class SentinelMcpServer {
       res.end('Not found');
     });
 
-    await new Promise<void>((resolve, reject) => {
-      this.httpServer?.listen(this.port, () => {
-        resolve();
+    const initialPort = this.port;
+    const tryListen = (targetPort: number): Promise<number> => {
+      return new Promise<number>((resolve, reject) => {
+        const onError = (err: any) => {
+          this.httpServer?.removeListener('error', onError);
+          if (err.code === 'EADDRINUSE' && targetPort < initialPort + 50) {
+            resolve(tryListen(targetPort + 1));
+          } else {
+            reject(err);
+          }
+        };
+
+        this.httpServer?.once('error', onError);
+        this.httpServer?.listen(targetPort, () => {
+          this.httpServer?.removeListener('error', onError);
+          this.port = targetPort;
+          resolve(targetPort);
+        });
       });
-      this.httpServer?.on('error', reject);
-    });
+    };
+
+    await tryListen(this.port);
   }
 
   public async stop(): Promise<void> {

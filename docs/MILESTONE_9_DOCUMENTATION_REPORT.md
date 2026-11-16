@@ -121,3 +121,4 @@ Includes full turn flow: prompt input $\to$ MRI lookup $\to$ Context Auction kna
 - **Remote Origin:** `https://github.com/shriyashthechamp-hash/TrueForge.git`
 - **Release Candidate Base Commit:** `22a8baf`
 - **Documentation Commit:** `docs(readme): publish FORGE SENTINEL competition documentation`
+

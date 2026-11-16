@@ -82,3 +82,4 @@ This guide provides instructions and checklists for capturing high-fidelity prod
 - **Theme:** Default Dark Modern or GitHub Dark High Contrast for maximum visual clarity.
 - **Format:** Optimized PNG format.
 - **Storage:** Save files to `FORGE-SENTINEL/assets/screenshots/`.
+

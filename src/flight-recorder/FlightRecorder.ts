@@ -135,6 +135,7 @@ export class FlightRecorder {
     patchesAccepted: number;
     approvedHunksCount?: number;
     rejectedHunksCount?: number;
+    isReadOnly?: boolean;
   }): ProofOfChangeReport {
     const executed = Array.from(this.testsExecuted);
     const discovered = Array.from(this.testsDiscovered);
@@ -159,10 +160,14 @@ export class FlightRecorder {
       status = 'success';
     } else if (options.patchesAccepted > 0) {
       status = 'partial';
+    } else if (options.isReadOnly || (options.patchesProposed === 0 && options.filesModified.length === 0)) {
+      status = 'read_only_completed';
     }
 
     if (this.remainingRisks.length === 0 && options.filesModified.length > 0) {
       this.remainingRisks.push('Standard pre-merge automated CI regression validation recommended.');
+    } else if (status === 'read_only_completed' && this.remainingRisks.length === 0) {
+      this.remainingRisks.push('Read-only query: no repository files modified.');
     }
 
     const report: ProofOfChangeReport = {

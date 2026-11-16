@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { TrueForgeHarnessClient } from './agent/TrueForgeHarnessClient.js';
 import { CodebaseMri } from './context/CodebaseMri.js';
@@ -6,8 +7,10 @@ import { PatchStagingManager } from './diff/PatchStagingManager.js';
 import { FlightRecorder } from './flight-recorder/FlightRecorder.js';
 import { SentinelMcpServer } from './mcp/SentinelMcpServer.js';
 import { ModelRescue } from './resilience/ModelRescue.js';
+import { FlightRecorderTreeDataProvider } from './ui/FlightRecorderTreeDataProvider.js';
 import { InlineEditController } from './ui/InlineEditController.js';
 import { SentinelAgentViewProvider } from './ui/SentinelAgentViewProvider.js';
+import { StagedPatchesTreeDataProvider } from './ui/StagedPatchesTreeDataProvider.js';
 
 let mcpServerInstance: SentinelMcpServer | null = null;
 
@@ -29,6 +32,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const modelRescue = new ModelRescue();
   const trueforgeClient = new TrueForgeHarnessClient(trueforgeUrl, trueforgeToken);
 
+  const stagedPatchesTreeProvider = new StagedPatchesTreeDataProvider(patchManager);
+  const flightRecorderTreeProvider = new FlightRecorderTreeDataProvider(flightRecorder);
+
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('forge-sentinel.stagedPatches', stagedPatchesTreeProvider),
+    vscode.window.registerTreeDataProvider('forge-sentinel.flightRecorder', flightRecorderTreeProvider)
+  );
+
   const mcpPort = 9099;
   mcpServerInstance = new SentinelMcpServer(workspaceRoot, patchManager, mri, auction, mcpPort);
 
@@ -46,7 +57,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     mri,
     auction,
     trueforgeClient,
-    flightRecorder
+    flightRecorder,
+    stagedPatchesTreeProvider,
+    flightRecorderTreeProvider
   );
 
   context.subscriptions.push(
@@ -73,6 +86,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('forge-sentinel.openPanel', async () => {
       await vscode.commands.executeCommand('forge-sentinel.agentPanel.focus');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('forge-sentinel.openPatchDiff', async (patchId: string) => {
+      const patch = patchManager.getPatch(patchId);
+      if (patch) {
+        const fileUri = vscode.Uri.file(patch.absolutePath);
+        const tempProposed = vscode.Uri.parse(`untitled:${patch.filePath}.proposed`);
+        const doc = await vscode.workspace.openTextDocument(tempProposed);
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(tempProposed, new vscode.Range(0, 0, doc.lineCount, 0), patch.proposedContent);
+        await vscode.workspace.applyEdit(edit);
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          fileUri,
+          tempProposed,
+          `Sentinel Review: ${path.basename(patch.filePath)} (Proposed Diff)`
+        );
+      }
     })
   );
 

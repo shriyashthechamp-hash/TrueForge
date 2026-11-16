@@ -73,8 +73,8 @@ import { PatchStagingManager } from '../../src/diff/PatchStagingManager';
 
 describe('Milestone 10: Autonomous Hardening & Regression Suite', () => {
 
-  describe('Issue A: Unified Authoritative Model Resolution', () => {
-    it('prefers active Qwen model over deprecated Llama 3.3', async () => {
+  describe('Issue A: Unified Authoritative Model Resolution (Gemini 3.8 Flash Primary)', () => {
+    it('selects Gemini 3.8 Flash (Google) as authoritative primary model over stale Groq models', async () => {
       const client = new TrueForgeHarnessClient();
       vi.spyOn(client, 'getAvailableModels').mockResolvedValue([
         {
@@ -95,12 +95,25 @@ describe('Milestone 10: Autonomous Hardening & Regression Suite', () => {
           contextLength: 131072,
           maxOutputTokens: 8192,
           isAvailable: true,
+          isPreferred: false,
+        },
+        {
+          name: 'google-gemini/gemini-3-8-flash',
+          modelId: 'gemini-3.8-flash',
+          displayName: 'Gemini 3.8 Flash (Google)',
+          provider: 'google',
+          contextLength: 1048576,
+          maxOutputTokens: 65536,
+          isAvailable: true,
           isPreferred: true,
         },
       ]);
 
       const resolved = await client.resolveAuthoritativeModel();
-      expect(resolved.name).toBe('groq/qwen-3-8-27b');
+      expect(resolved.name).toBe('google-gemini/gemini-3-8-flash');
+      expect(resolved.modelId).toBe('gemini-3.8-flash');
+      expect(resolved.displayName).toBe('Gemini 3.8 Flash (Google)');
+      expect(resolved.provider).toBe('google');
       expect(resolved.isPreferred).toBe(true);
       expect(resolved.isAvailable).toBe(true);
     });
@@ -119,12 +132,12 @@ describe('Milestone 10: Autonomous Hardening & Regression Suite', () => {
           isPreferred: false,
         },
         {
-          name: 'groq/qwen-3-8-27b',
-          modelId: 'qwen/qwen3.8-27b',
-          displayName: 'Qwen 3.8 27B (Groq)',
-          provider: 'groq',
-          contextLength: 131072,
-          maxOutputTokens: 8192,
+          name: 'google-gemini/gemini-3-8-flash',
+          modelId: 'gemini-3.8-flash',
+          displayName: 'Gemini 3.8 Flash (Google)',
+          provider: 'google',
+          contextLength: 1048576,
+          maxOutputTokens: 65536,
           isAvailable: true,
           isPreferred: true,
         },
@@ -132,11 +145,14 @@ describe('Milestone 10: Autonomous Hardening & Regression Suite', () => {
 
       const configured = await client.listConfiguredModels();
       expect(configured).not.toContain('groq/llama-3-3-70b-versatile');
-      expect(configured).toContain('groq/qwen-3-8-27b');
+      expect(configured).toContain('google-gemini/gemini-3-8-flash');
     });
 
     it('formats model display names accurately and cleanly', () => {
       const client = new TrueForgeHarnessClient();
+      expect(client.formatModelDisplayName('google-gemini/gemini-3-8-flash', 'gemini-3.8-flash')).toBe(
+        'Gemini 3.8 Flash (Google)'
+      );
       expect(client.formatModelDisplayName('groq/qwen-3-8-27b')).toBe('Qwen 3.8 27B (Groq)');
       expect(client.formatModelDisplayName('groq/llama-3.1-8b-instant')).toBe('Llama 3.1 8B Instant (Groq)');
     });

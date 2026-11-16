@@ -38,20 +38,20 @@ fi
 # Check 2: Configured Models & Live Inference Probe
 echo -e "\n${COLOR_BLUE}[2/${TOTAL_CHECKS}] Checking Configured LLM Models & Live Inference Probe...${COLOR_RESET}"
 MODELS_JSON=$(curl -s -H "Authorization: Bearer trueforge-standalone" http://localhost:8790/api/v1/models 2>/dev/null || echo "{}")
-if echo "${MODELS_JSON}" | grep -q "qwen"; then
-    echo -e "  ${COLOR_GREEN}✓ Groq Qwen model (qwen-3-8-27b) is CONFIGURED.${COLOR_RESET}"
+if echo "${MODELS_JSON}" | grep -q "gemini-3.8-flash"; then
+    echo -e "  ${COLOR_GREEN}✓ Google Gemini model (gemini-3.8-flash) is CONFIGURED as primary.${COLOR_RESET}"
     echo -e "  Testing live model inference turn through TrueForge..."
     if cd "${SENTINEL_ROOT}" && npx vitest run tests/agent/TrueForgeHarnessClient.test.ts >/dev/null 2>&1; then
-        echo -e "  ${COLOR_GREEN}✓ Live inference probe SUCCESSFUL (real Groq streaming verified).${COLOR_RESET}"
+        echo -e "  ${COLOR_GREEN}✓ Live inference probe SUCCESSFUL (real Gemini 3.8 Flash streaming verified).${COLOR_RESET}"
         PASSED_COUNT=$((PASSED_COUNT + 1))
     else
         echo -e "  ${COLOR_YELLOW}⚠ Model configured but live turn probe timed out or failed.${COLOR_RESET}"
     fi
-elif echo "${MODELS_JSON}" | grep -q "groq"; then
-    echo -e "  ${COLOR_GREEN}✓ Groq Provider is ACTIVE.${COLOR_RESET}"
+elif echo "${MODELS_JSON}" | grep -q "google-gemini"; then
+    echo -e "  ${COLOR_GREEN}✓ Google Gemini Provider is ACTIVE.${COLOR_RESET}"
     PASSED_COUNT=$((PASSED_COUNT + 1))
 else
-    echo -e "  ${COLOR_YELLOW}⚠ No Groq model detected in TrueForge list.${COLOR_RESET}"
+    echo -e "  ${COLOR_YELLOW}⚠ No Google Gemini model (gemini-3.8-flash) detected in TrueForge list.${COLOR_RESET}"
 fi
 
 # Check 3: Flask Virtual Environment & Dependencies
@@ -85,7 +85,7 @@ fi
 
 # Check 6: Credential Isolation Check
 echo -e "\n${COLOR_BLUE}[6/${TOTAL_CHECKS}] Auditing Sentinel Repository for Credential Leaks...${COLOR_RESET}"
-LEAKS=$( (grep -rEI --exclude-dir={node_modules,.git,dist,tests} "gsk_[A-Za-z0-9_-]{20,}" "${SENTINEL_ROOT}" 2>/dev/null || true) | wc -l | tr -d ' ')
+LEAKS=$( (grep -rEI --exclude-dir={node_modules,.git,dist,tests} "(AIza[A-Za-z0-9_-]{30,}|gsk_[A-Za-z0-9_-]{20,})" "${SENTINEL_ROOT}" 2>/dev/null || true) | wc -l | tr -d ' ')
 if [ "${LEAKS}" -eq "0" ]; then
     echo -e "  ${COLOR_GREEN}✓ ZERO API keys or tokens found in source code, configs, or commits.${COLOR_RESET}"
     PASSED_COUNT=$((PASSED_COUNT + 1))

@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type {
@@ -8,7 +9,23 @@ import type {
 } from '../shared/types.js';
 import type { CodebaseMri } from './CodebaseMri.js';
 
+export interface AuctionOptions {
+  reservedTokens?: number;
+  reservedInstructionsTokens?: number;
+  reservedOutputTokens?: number;
+  conversationHistoryTokens?: number;
+  mcpToolDefinitionsTokens?: number;
+  toolResultsTokens?: number;
+  safetyMarginTokens?: number;
+  modelContextCapacity?: number;
+  maxSelectedFiles?: number;
+  minRelevanceScore?: number;
+  toolResultsHistory?: Array<{ id: string; toolName?: string; result: unknown }>;
+}
+
 export class ContextAuction {
+  private seenToolResultHashes = new Map<string, string>();
+
   constructor(
     private readonly workspaceRoot: string,
     private readonly mri: CodebaseMri,
@@ -17,6 +34,48 @@ export class ContextAuction {
 
   public estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Deduplicates unchanged tool results across multi-step turns to avoid repeatedly
+   * transmitting identical large tool outputs.
+   */
+  public deduplicateToolResults<T extends { id: string; toolName?: string; result: unknown }>(
+    results: T[]
+  ): { deduplicated: T[]; deduplicatedCount: number; savedTokens: number } {
+    let deduplicatedCount = 0;
+    let savedTokens = 0;
+    const seenInBatch = new Map<string, string>();
+
+    const deduplicated = results.map((item) => {
+      const serialized = typeof item.result === 'string' ? item.result : JSON.stringify(item.result ?? {});
+      const hash = crypto
+        .createHash('sha256')
+        .update(`${item.toolName ?? ''}:${serialized}`)
+        .digest('hex')
+        .slice(0, 16);
+
+      const prevId = seenInBatch.get(hash) ?? this.seenToolResultHashes.get(hash);
+      if (prevId && prevId !== item.id && serialized.length > 120) {
+        deduplicatedCount++;
+        const compactRef = `[Unchanged tool output identical to call ${prevId} (sha256:${hash}) — omitted to conserve context budget]`;
+        savedTokens += Math.max(0, this.estimateTokens(serialized) - this.estimateTokens(compactRef));
+        return {
+          ...item,
+          result: compactRef,
+        };
+      }
+
+      seenInBatch.set(hash, item.id);
+      this.seenToolResultHashes.set(hash, item.id);
+      return item;
+    });
+
+    return { deduplicated, deduplicatedCount, savedTokens };
+  }
+
+  public clearToolResultCache(): void {
+    this.seenToolResultHashes.clear();
   }
 
   public parseExplicitMentions(query: string): {
@@ -44,32 +103,71 @@ export class ContextAuction {
 
   /**
    * Runs the multi-factor Context Auction algorithm with responsible token budgeting,
-   * capacity reservation for system prompt and output, and relevance thresholding.
+   * accounting for system instructions, conversation history, MCP tool definitions,
+   * retrieved source code, tool results, expected output tokens, safety margin, and
+   * model-specific context limits.
+   *
+   * Never silently truncates critical system instructions or explicitly requested (@file) files.
    */
   public async runAuction(
     query: string,
     budgetOverride?: number,
-    options?: {
-      reservedInstructionsTokens?: number;
-      reservedOutputTokens?: number;
-      maxSelectedFiles?: number;
-      minRelevanceScore?: number;
-    }
+    options?: AuctionOptions
   ): Promise<{ receipt: ContextSelectionReceipt; contextBundle: string }> {
     const totalBudget = budgetOverride ?? this.defaultTokenBudget;
+    const totalContextCapacity = options?.modelContextCapacity ?? Math.max(totalBudget, 1048576);
 
-    // Reserve capacity for system prompt/tools and LLM output generation
-    // For small test budgets (< 1000 tokens), allocate 100% to code so micro-budgets work predictably
+    // For small test micro-budgets (< 1000 tokens), allocate 100% to code so micro-budgets work predictably
     const isMicroBudget = totalBudget < 1000;
+
     const reservedInstructions = isMicroBudget
       ? 0
-      : (options?.reservedInstructionsTokens ?? (totalBudget >= 8000 ? 1500 : Math.round(totalBudget * 0.2)));
+      : (options?.reservedInstructionsTokens ??
+          (options?.reservedTokens !== undefined
+            ? Math.round(options.reservedTokens * 0.4)
+            : totalBudget >= 8000
+              ? 1200
+              : Math.round(totalBudget * 0.15)));
+
     const reservedOutput = isMicroBudget
       ? 0
-      : (options?.reservedOutputTokens ?? (totalBudget >= 8000 ? 3500 : Math.round(totalBudget * 0.3)));
+      : (options?.reservedOutputTokens ??
+          (options?.reservedTokens !== undefined
+            ? Math.round(options.reservedTokens * 0.6)
+            : totalBudget >= 8000
+              ? 2500
+              : Math.round(totalBudget * 0.25)));
+
+    const historyTokens = isMicroBudget ? 0 : (options?.conversationHistoryTokens ?? 0);
+    const mcpToolsTokens = isMicroBudget
+      ? 0
+      : (options?.mcpToolDefinitionsTokens ?? (options?.reservedTokens !== undefined ? 0 : Math.min(800, Math.round(totalBudget * 0.08))));
+
+    let toolResultsTokens = isMicroBudget ? 0 : (options?.toolResultsTokens ?? 0);
+    let deduplicatedToolResults = 0;
+    if (options?.toolResultsHistory && options.toolResultsHistory.length > 0) {
+      const dedup = this.deduplicateToolResults(options.toolResultsHistory);
+      deduplicatedToolResults = dedup.deduplicatedCount;
+      const rawResultsText = dedup.deduplicated
+        .map((r) => (typeof r.result === 'string' ? r.result : JSON.stringify(r.result)))
+        .join('\n');
+      toolResultsTokens = isMicroBudget ? 0 : this.estimateTokens(rawResultsText);
+    }
+
+    const safetyMargin = isMicroBudget
+      ? 0
+      : (options?.safetyMarginTokens ??
+          (options?.reservedTokens !== undefined ? 0 : Math.min(1000, Math.round(totalBudget * 0.05))));
+
+    const totalNonCodeOverhead =
+      reservedInstructions + reservedOutput + historyTokens + mcpToolsTokens + toolResultsTokens + safetyMargin;
+
     const codeBudget = isMicroBudget
       ? totalBudget
-      : Math.max(100, Math.min(totalBudget, totalBudget - reservedInstructions - reservedOutput));
+      : options?.reservedTokens !== undefined
+        ? Math.max(100, totalBudget - options.reservedTokens)
+        : Math.max(250, Math.min(totalBudget, totalBudget - totalNonCodeOverhead));
+
     const maxFiles = options?.maxSelectedFiles ?? 15;
     const minScore = options?.minRelevanceScore ?? 35;
 
@@ -81,7 +179,7 @@ export class ContextAuction {
       .filter((t) => t.length > 2);
 
     const files = this.mri.getFiles();
-    const candidateMap = new Map<string, { candidate: ContextAuctionCandidate; fileMeta: FileMetadata }>();
+    const candidateMap = new Map<string, { candidate: ContextAuctionCandidate; fileMeta: FileMetadata; fullContent?: string }>();
 
     // 1. Initial Lexical & Symbol Scoring Pass
     for (const file of files) {
@@ -153,7 +251,6 @@ export class ContextAuction {
     }
 
     // 2. Dependency Proximity & Import Boost Pass
-    // If File A is high-scoring, files it imports and files that import it get a proximity boost
     const initialScored = Array.from(candidateMap.values()).filter((c) => c.candidate.score >= 50);
     for (const item of initialScored) {
       const importedPaths = this.mri.getImportedFiles(item.candidate.filePath);
@@ -182,8 +279,9 @@ export class ContextAuction {
     }
 
     // 3. Sub-file Snippet Strategy & Token Budgeting
-    const scoredCandidates: ContextAuctionCandidate[] = [];
-    for (const { candidate, fileMeta } of candidateMap.values()) {
+    const scoredCandidates: Array<{ candidate: ContextAuctionCandidate; fileMeta: FileMetadata; fullContent: string }> = [];
+    for (const entry of candidateMap.values()) {
+      const { candidate, fileMeta } = entry;
       let content = '';
       try {
         content = await fs.readFile(fileMeta.absolutePath, 'utf8');
@@ -191,10 +289,11 @@ export class ContextAuction {
         continue;
       }
 
-      // If file is very large (> 2000 tokens) and not explicitly named, extract symbol-level window
+      const isExplicitFile = candidate.relevanceRationale.includes('@file');
       const fullTokens = this.estimateTokens(content);
-      if (fullTokens > 2000 && candidate.matchedSymbols.length > 0 && !candidate.relevanceRationale.includes('@file')) {
-        // Extract relevant symbol regions with padding
+
+      // Never silently truncate explicitly requested @file files
+      if (!isExplicitFile && fullTokens > 2000 && candidate.matchedSymbols.length > 0) {
         const extracted = this.extractSymbolSnippets(content, fileMeta.symbols, candidate.matchedSymbols);
         candidate.snippet = extracted.snippet;
         candidate.startLine = extracted.startLine;
@@ -206,19 +305,21 @@ export class ContextAuction {
         candidate.estimatedTokens = fullTokens;
       }
 
-      scoredCandidates.push(candidate);
+      scoredCandidates.push({ candidate, fileMeta, fullContent: content });
     }
 
     // Sort by final score descending
-    scoredCandidates.sort((a, b) => b.score - a.score);
+    scoredCandidates.sort((a, b) => b.candidate.score - a.candidate.score);
 
-    // 4. Auction Allocation with Relevance Thresholding and Capacity Reservation
+    // 4. Auction Allocation with Adaptive Context Reduction, Relevance Thresholding and Capacity Reservation
     let tokensUsed = 0;
+    let adaptiveReductionApplied = false;
     const selectedFiles: ContextAuctionCandidate[] = [];
     const excludedFiles: { filePath: string; score: number; exclusionReason: string }[] = [];
     const bundleChunks: string[] = [];
 
-    for (const candidate of scoredCandidates) {
+    for (const { candidate, fileMeta, fullContent } of scoredCandidates) {
+      const isExplicitFile = candidate.relevanceRationale.includes('@file');
       const isExplicit = candidate.score >= 500;
 
       // Filter out low-relevance noise unless explicitly requested by user
@@ -241,13 +342,35 @@ export class ContextAuction {
         continue;
       }
 
-      if (tokensUsed + candidate.estimatedTokens <= codeBudget) {
+      // Explicit @file mentions are never silently truncated; include them if within codeBudget or if first explicit file
+      if (tokensUsed + candidate.estimatedTokens <= codeBudget || (isExplicitFile && selectedFiles.length === 0 && !isMicroBudget)) {
         tokensUsed += candidate.estimatedTokens;
         selectedFiles.push(candidate);
         const snippetBody = candidate.snippet ?? '';
         bundleChunks.push(
           `--- FILE: ${candidate.filePath}${candidate.startLine ? ` (lines ${candidate.startLine}-${candidate.endLine})` : ''} ---\n${snippetBody}\n--- END FILE: ${candidate.filePath} ---`
         );
+      } else if (!isExplicitFile && !isMicroBudget && codeBudget - tokensUsed >= 120) {
+        // Adaptive Context Reduction: compress non-explicit file to structural symbol/import summary if full body exceeds remaining budget
+        const structuralSummary = this.buildStructuralOutline(fileMeta, fullContent);
+        const summaryTokens = this.estimateTokens(structuralSummary);
+        if (summaryTokens < candidate.estimatedTokens && tokensUsed + summaryTokens <= codeBudget) {
+          adaptiveReductionApplied = true;
+          candidate.snippet = structuralSummary;
+          candidate.estimatedTokens = summaryTokens;
+          candidate.relevanceRationale += ' [Adaptive context reduction: structural symbol outline]';
+          tokensUsed += summaryTokens;
+          selectedFiles.push(candidate);
+          bundleChunks.push(
+            `--- FILE OUTLINE: ${candidate.filePath} ---\n${structuralSummary}\n--- END FILE OUTLINE: ${candidate.filePath} ---`
+          );
+          continue;
+        }
+        excludedFiles.push({
+          filePath: candidate.filePath,
+          score: candidate.score,
+          exclusionReason: `Budget ceiling: requires ~${candidate.estimatedTokens} tokens; remaining capacity is ${codeBudget - tokensUsed} tokens`,
+        });
       } else {
         excludedFiles.push({
           filePath: candidate.filePath,
@@ -257,6 +380,11 @@ export class ContextAuction {
       }
     }
 
+    const queryPromptTokens = this.estimateTokens(query);
+    const estimatedRequestTokens =
+      tokensUsed +
+      (isMicroBudget ? 0 : queryPromptTokens + reservedInstructions + historyTokens + mcpToolsTokens + toolResultsTokens);
+
     const receipt: ContextSelectionReceipt = {
       query,
       timestamp: new Date().toISOString(),
@@ -265,7 +393,18 @@ export class ContextAuction {
       reservedCapacity: {
         instructions: reservedInstructions,
         output: reservedOutput,
+        history: historyTokens,
+        mcpTools: mcpToolsTokens,
+        toolResults: toolResultsTokens,
+        safetyMargin,
       },
+      retrievedCodeTokens: tokensUsed,
+      estimatedRequestTokens,
+      reservedOutputTokens: reservedOutput,
+      safetyMarginTokens: safetyMargin,
+      totalContextCapacity,
+      adaptiveReductionApplied,
+      deduplicatedToolResults,
       totalTokensUsed: tokensUsed,
       selectedFiles,
       excludedFiles,
@@ -273,6 +412,17 @@ export class ContextAuction {
     };
 
     return { receipt, contextBundle: bundleChunks.join('\n\n') };
+  }
+
+  private buildStructuralOutline(fileMeta: FileMetadata, content: string): string {
+    const lines = content.split('\n');
+    const headerLines = lines.slice(0, Math.min(20, lines.length)).join('\n');
+    const symbolList =
+      fileMeta.symbols.length > 0
+        ? fileMeta.symbols.map((s) => `  - [${s.kind}] ${s.name} (line ${s.startLine})`).join('\n')
+        : '  (no top-level symbols indexed)';
+    const importList = fileMeta.imports.length > 0 ? fileMeta.imports.join(', ') : 'none';
+    return `# Structural Summary (${lines.length} lines total)\nImports: ${importList}\nSymbols:\n${symbolList}\n\n# Header Preview:\n${headerLines}`;
   }
 
   /**

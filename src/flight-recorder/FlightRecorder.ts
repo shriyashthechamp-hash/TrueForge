@@ -70,17 +70,38 @@ export class FlightRecorder {
     this.unverifiedBehavior.push(note);
   }
 
+  private sanitizeObjectSecrets(obj?: Record<string, unknown>): Record<string, unknown> | undefined {
+    if (!obj) return undefined;
+    try {
+      const serialized = JSON.stringify(obj)
+        .replace(/AIza[A-Za-z0-9_-]{20,}/g, '[REDACTED_GEMINI_KEY]')
+        .replace(/gsk_[A-Za-z0-9_-]{10,}/gi, '[REDACTED_GROQ_KEY]')
+        .replace(/sk-[A-Za-z0-9_-]{20,}/gi, '[REDACTED_API_KEY]')
+        .replace(/bearer\s+[a-zA-Z0-9_\-\.]{15,}/gi, 'Bearer [REDACTED_TOKEN]')
+        .replace(/(GEMINI_API_KEY|GROQ_API_KEY|OPENAI_API_KEY|api_key)=([A-Za-z0-9_\-]{12,})/gi, '$1=[REDACTED_SECRET]');
+      return JSON.parse(serialized) as Record<string, unknown>;
+    } catch {
+      return obj;
+    }
+  }
+
   public record(
     type: FlightRecorderEvent['type'],
     summary: string,
     details?: Record<string, unknown>
   ): FlightRecorderEvent {
+    const cleanSummary = summary
+      .replace(/AIza[A-Za-z0-9_-]{20,}/g, '[REDACTED_GEMINI_KEY]')
+      .replace(/gsk_[A-Za-z0-9_-]{10,}/gi, '[REDACTED_GROQ_KEY]')
+      .replace(/sk-[A-Za-z0-9_-]{20,}/gi, '[REDACTED_API_KEY]');
+    const cleanDetails = this.sanitizeObjectSecrets(details);
+
     const event: FlightRecorderEvent = {
       id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
       type,
-      summary,
-      details,
+      summary: cleanSummary,
+      details: cleanDetails,
     };
     this.events.push(event);
 

@@ -12,11 +12,15 @@ AI coding assistants often request API keys via environment variables or prompt 
 
 ### Mitigation
 1. **Strict Credential Quarantine:**
-   - FORGE//SENTINEL contains **zero** credential storage, parsing, or hardcoded secrets.
-   - All LLM credentials (e.g. Groq, OpenAI, Anthropic) reside strictly inside the isolated TrueForge daemon runtime.
-   - Communication between Sentinel and TrueForge occurs over authenticated local loopback (`http://localhost:8790`), passing session requests without exposing provider API tokens to the client.
-2. **Automated Credential Leak Scanners:**
-   - The repository includes automated scanning in `./scripts/health_check.sh` and CI hooks checking for common secret entropy patterns (`gsk_`, `sk-`, `ghp_`, `AKIA`, etc.).
+   - FORGE//SENTINEL contains **zero** hardcoded secrets or committed API keys.
+   - All LLM credentials (e.g. `GEMINI_API_KEY` for Google Gemini 3.8 Flash, Groq, OpenAI, Anthropic) reside in the isolated TrueForge daemon runtime or gitignored local `.env` environment configuration.
+   - Communication between Sentinel and TrueForge occurs over authenticated local loopback (`http://localhost:8790`), passing session requests without exposing provider API tokens in logs, UI, or extension bundles.
+   - Child terminal and test processes spawned by `SentinelMcpServer` have `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` stripped from their environment variables, and `.env`, `.pem`, and `.key` files are blocked from both `CodebaseMri` indexing and MCP file tools.
+2. **Automated Credential Leak Scanners & Log Redaction:**
+   - `ModelRescue` and `FlightRecorder` automatically redact `AIza...` (Google Gemini), `gsk_...` (Groq), `sk-...` (OpenAI), and `Bearer` tokens across all logs, error messages, and diagnostics.
+   - The repository includes automated scanning in `./scripts/health_check.sh` checking for secret patterns across source code and build outputs.
+3. **Google Gemini Free-Tier Data-Use Policy:**
+   - When using the unpaid Google Gemini Developer API free tier, Google may log prompts and responses for product improvement and abuse review per Google AI Studio terms. FORGE//SENTINEL enforces strict secret exclusion (`.env`, `.pem`, `.key`) and never enables paid billing without explicit user action.
 
 ---
 

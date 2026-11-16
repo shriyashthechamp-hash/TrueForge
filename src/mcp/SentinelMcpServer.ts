@@ -41,7 +41,15 @@ export class SentinelMcpServer {
   }
 
   private assertSafePath(targetPath: string): string {
-    return this.patchManager.assertInsideWorkspace(targetPath);
+    const resolved = this.patchManager.assertInsideWorkspace(targetPath);
+    const baseLower = path.basename(resolved).toLowerCase();
+    if (
+      (baseLower === '.env' || baseLower.startsWith('.env.') || baseLower.endsWith('.pem') || baseLower.endsWith('.key')) &&
+      baseLower !== '.env.example'
+    ) {
+      throw new SecurityBoundaryError(targetPath, `${this.workspaceRoot} (credential/secret file access blocked)`);
+    }
+    return resolved;
   }
 
   private createServer(): Server {
@@ -517,10 +525,23 @@ export class SentinelMcpServer {
             const startTime = Date.now();
             const venvBin = path.join(this.workspaceRoot, '.venv', 'bin');
             const customPath = `${venvBin}:${process.env.PATH ?? ''}`;
+            const sanitizedEnv: NodeJS.ProcessEnv = { ...process.env, PATH: customPath };
+            // Strip provider API keys from child shell environment so repository scripts cannot leak secrets
+            delete sanitizedEnv.GEMINI_API_KEY;
+            delete sanitizedEnv.GROQ_API_KEY;
+            delete sanitizedEnv.OPENAI_API_KEY;
+            delete sanitizedEnv.ANTHROPIC_API_KEY;
+
+            const redactSecrets = (str: string): string =>
+              str
+                .replace(/AIza[A-Za-z0-9_-]{20,}/g, '[REDACTED_GEMINI_KEY]')
+                .replace(/gsk_[A-Za-z0-9_-]{10,}/gi, '[REDACTED_GROQ_KEY]')
+                .replace(/sk-[A-Za-z0-9_-]{20,}/gi, '[REDACTED_API_KEY]');
+
             try {
               const { stdout, stderr } = await execAsync(cmd, {
                 cwd: this.workspaceRoot,
-                env: { ...process.env, PATH: customPath },
+                env: sanitizedEnv,
                 timeout,
                 maxBuffer: 5 * 1024 * 1024,
               });
@@ -529,7 +550,7 @@ export class SentinelMcpServer {
                 content: [
                   {
                     type: 'text',
-                    text: `Command executed successfully (exit code 0, duration: ${durationMs}ms):\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`,
+                    text: `Command executed successfully (exit code 0, duration: ${durationMs}ms):\n\nSTDOUT:\n${redactSecrets(stdout)}\n\nSTDERR:\n${redactSecrets(stderr)}`,
                   },
                 ],
               };
@@ -539,7 +560,7 @@ export class SentinelMcpServer {
                 content: [
                   {
                     type: 'text',
-                    text: `Command failed (exit code ${err.code ?? 1}, duration: ${durationMs}ms):\n\nSTDOUT:\n${err.stdout ?? ''}\n\nSTDERR:\n${err.stderr ?? ''}\nERROR: ${err.message}`,
+                    text: `Command failed (exit code ${err.code ?? 1}, duration: ${durationMs}ms):\n\nSTDOUT:\n${redactSecrets(err.stdout ?? '')}\n\nSTDERR:\n${redactSecrets(err.stderr ?? '')}\nERROR: ${redactSecrets(err.message ?? '')}`,
                   },
                 ],
                 isError: true,

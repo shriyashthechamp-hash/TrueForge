@@ -93,23 +93,26 @@ FORGE//SENTINEL relies on TrueForge for agent session management and model infer
 
 ---
 
-### Step 3: Configure Model Provider inside TrueForge
+### Step 3: Configure Google Gemini Provider inside TrueForge
 
 > [!CAUTION]
-> **Zero Credential Exposure Rule**: Never commit, hardcode, or pass model API keys directly into `FORGE-SENTINEL`. All LLM keys must be stored exclusively inside the TrueForge configuration.
+> **Zero Credential Exposure Rule**: Never commit or hardcode model API keys into `FORGE-SENTINEL` source files. Configure `GEMINI_API_KEY` inside your gitignored `FORGE-SENTINEL/.env` file or directly inside the TrueForge configuration store.
 
-To configure your Groq provider inside TrueForge:
-1. Open the TrueForge UI in your browser: `http://localhost:8790` (or configure via TrueForge CLI/API).
-2. Navigate to **Settings > Providers > Groq**.
-3. Input your Groq API key (`gsk_...`).
-4. Ensure the canonical active model is configured:
-   - **Display ID:** `groq/qwen-3-8-27b`
-   - **Underlying Model ID:** `qwen/qwen3.8-27b`
+To configure your Google Gemini provider inside TrueForge:
+1. Set `GEMINI_API_KEY=<your_key>` inside `FORGE-SENTINEL/.env` (which is ignored by Git) — `FORGE//SENTINEL` will automatically register and sync `google-gemini` (`gemini-3.8-flash`) with TrueForge on startup.
+2. Alternatively, configure via the TrueForge API (`PUT http://localhost:8790/api/v1/settings/model-providers`) or UI (`http://localhost:8790` > **Settings > Providers > Google Gemini**):
+   - **Provider Type:** `google-gemini`
+   - **Canonical FQN:** `google-gemini/gemini-3-8-flash`
+   - **Underlying Model ID:** `gemini-3.8-flash`
+   - **UI Display Name:** `Gemini 3.8 Flash (Google)`
+
+> [!NOTE]
+> **Google Gemini Free-Tier Data-Use Implications**: Under the Google AI Studio / Gemini Developer API terms of service, requests submitted on the unpaid **Free Tier** may be reviewed by Google reviewers and used to train or improve Google products. Never transmit production secrets, private cryptographic keys, or proprietary customer PII on the Free Tier (`FORGE//SENTINEL` automatically blocks `.env`, `.pem`, and `.key` files from indexing and MCP tool access). Paid billing is not enabled unless explicitly configured in Google Cloud / AI Studio.
 
 Verify that the model is visible to TrueForge:
 ```bash
 curl -s -H "Authorization: Bearer trueforge-standalone" http://localhost:8790/api/v1/models
-# Output will list configured models including "groq/qwen-3-8-27b"
+# Output will list configured models including "google-gemini/gemini-3-8-flash" ("gemini-3.8-flash")
 ```
 
 ---

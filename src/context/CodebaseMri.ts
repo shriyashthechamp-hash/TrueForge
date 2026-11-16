@@ -224,6 +224,14 @@ export class CodebaseMri {
     const relativePath = path.relative(this.workspaceRoot, fullPath);
     const ext = path.extname(fullPath).toLowerCase();
 
+    // Never index environment or secret key files
+    const baseLower = path.basename(fullPath).toLowerCase();
+    if (baseLower === '.env' || baseLower.startsWith('.env.') || baseLower.endsWith('.pem') || baseLower.endsWith('.key')) {
+      if (baseLower !== '.env.example') {
+        return undefined;
+      }
+    }
+
     if (!this.SUPPORTED_EXTS.has(ext)) {
       return undefined;
     }

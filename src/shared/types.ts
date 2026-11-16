@@ -42,7 +42,25 @@ export interface ContextSelectionReceipt {
   reservedCapacity?: {
     instructions: number;
     output: number;
+    history?: number;
+    mcpTools?: number;
+    toolResults?: number;
+    safetyMargin?: number;
   };
+  /** 1. Retrieved code-context tokens */
+  retrievedCodeTokens: number;
+  /** 2. Estimated complete request tokens (system + history + MCP tools + retrieved code + tool results) */
+  estimatedRequestTokens: number;
+  /** 3. Reserved output tokens */
+  reservedOutputTokens: number;
+  /** 4. Safety margin tokens */
+  safetyMarginTokens: number;
+  /** 5. Total context capacity (model context window or configured ceiling) */
+  totalContextCapacity: number;
+  /** Whether adaptive context reduction was triggered to fit budget */
+  adaptiveReductionApplied?: boolean;
+  /** Deduplicated unchanged tool results count */
+  deduplicatedToolResults?: number;
   totalTokensUsed: number;
   selectedFiles: ContextAuctionCandidate[];
   excludedFiles: {

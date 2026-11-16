@@ -104,3 +104,4 @@ export class FlightRecorderTreeDataProvider implements vscode.TreeDataProvider<F
     return Promise.resolve([]);
   }
 }
+

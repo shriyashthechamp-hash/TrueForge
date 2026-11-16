@@ -9,12 +9,16 @@ import type { FlightRecorder } from '../flight-recorder/FlightRecorder.js';
 import type { StagedPatchesTreeDataProvider } from './StagedPatchesTreeDataProvider.js';
 import type { FlightRecorderTreeDataProvider } from './FlightRecorderTreeDataProvider.js';
 import type { AgentExecutionStep, ProofOfChangeReport } from '../shared/types.js';
+import { ModelRescue } from '../resilience/ModelRescue.js';
 
 export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'forge-sentinel.agentPanel';
   private _view?: vscode.WebviewView;
   private currentAbortController?: AbortController;
   private activeSessionId?: string;
+  private readonly modelRescue = new ModelRescue(2);
+  private conversationHistoryTokens = 0;
+  private recordedToolResults: Array<{ id: string; toolName?: string; result: unknown }> = [];
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -136,7 +140,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleUserPrompt(promptText: string): Promise<void> {
+  public async handleUserPrompt(promptText: string): Promise<void> {
     if (!promptText || promptText.trim() === '') return;
 
     this.currentAbortController = new AbortController();
@@ -156,10 +160,27 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       const config = vscode.workspace.getConfiguration('forgeSentinel');
       const configuredBudget = config.get<number>('contextBudgetTokens', 16000);
 
-      const { receipt, contextBundle } = await this.auction.runAuction(promptText, configuredBudget, {
-        reservedInstructionsTokens: 1500,
-        reservedOutputTokens: 3500,
-        maxSelectedFiles: 15,
+      await this.trueforge.ensureGeminiProviderConfigured(undefined, this.workspaceRoot);
+      const authoritative = await this.trueforge.resolveAuthoritativeModel();
+      this._view?.webview.postMessage({
+        type: 'statusUpdate',
+        connected: true,
+        activeModel: authoritative.displayName,
+        modelName: authoritative.name,
+      });
+
+      const effectiveBudget = Math.min(configuredBudget, authoritative.contextLength || 1048576);
+      const reservedInstructions = Math.min(1200, Math.round(effectiveBudget * 0.15));
+      const reservedOutput = Math.min(2500, Math.round(effectiveBudget * 0.25));
+
+      const { receipt, contextBundle } = await this.auction.runAuction(promptText, effectiveBudget, {
+        reservedInstructionsTokens: reservedInstructions,
+        reservedOutputTokens: reservedOutput,
+        conversationHistoryTokens: this.conversationHistoryTokens,
+        mcpToolDefinitionsTokens: 800,
+        toolResultsHistory: this.recordedToolResults,
+        modelContextCapacity: authoritative.contextLength || 1048576,
+        maxSelectedFiles: 8,
         minRelevanceScore: 30,
       });
 
@@ -177,98 +198,148 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       });
 
       this.postExecutionStep('planning');
-      this._view?.webview.postMessage({ type: 'log', message: 'Resolving authoritative model and starting TrueForge agent turn...' });
+      this._view?.webview.postMessage({
+        type: 'log',
+        message: `Model resolved: ${authoritative.displayName} [${authoritative.modelId}]. Starting TrueForge agent turn...`,
+      });
 
-      const authoritative = await this.trueforge.resolveAuthoritativeModel();
-
-      this.activeSessionId = await this.trueforge.createSession({
-        modelName: authoritative.name,
-        instructions: `You are FORGE//SENTINEL, an expert autonomous coding agent.
+      if (!this.activeSessionId) {
+        this.activeSessionId = await this.trueforge.createSession({
+          modelName: authoritative.name,
+          instructions: `You are FORGE//SENTINEL, an expert autonomous coding agent.
 Core philosophy: "Understand First. Plan Intelligently. Change Precisely. Prove Everything."
-To inspect code: search_workspace, find_symbol, read_file, inspect_file_structure.
-To stage changes: propose_file_edit, propose_multi_file_edit.
+To inspect code: search_workspace, find_symbol, read_file, inspect_file_structure, list_workspace_files.
+To stage changes: propose_file_edit, propose_multi_file_edit, get_staged_patches.
 To run tests: run_test_command.
 Always explain the purpose, rationale, and expected impact of any changes before staging.`,
-      });
+        });
+      }
 
       const fullPrompt = `${promptText}\n\n=== RELEVANT CONTEXT (RETRIEVED VIA CONTEXT AUCTION) ===\n${contextBundle}`;
 
-      await this.trueforge.runTurn(
-        this.activeSessionId,
-        fullPrompt,
-        {
-          onTokenDelta: (delta) => {
-            accumulatedTokens += delta.length;
-            this._view?.webview.postMessage({ type: 'tokenDelta', delta });
-          },
-          onToolCall: (call) => {
-            if (call.name.includes('search') || call.name.includes('find')) {
-              this.postExecutionStep('searching');
-            } else if (call.name.includes('read') || call.name.includes('inspect')) {
-              this.postExecutionStep('inspecting');
-            } else if (call.name.includes('propose')) {
-              this.postExecutionStep('staging');
-            } else if (call.name.includes('test')) {
-              this.postExecutionStep('testing');
-            }
-            this._view?.webview.postMessage({ type: 'toolCall', call });
-            this.flightRecorder.record('tool_call', `Agent invoked tool: ${call.name}`, { ...call });
-            this.flightRecorderTreeProvider?.refresh();
-          },
-          onToolResponse: (resp) => {
-            this._view?.webview.postMessage({ type: 'toolResponse', resp });
-            this.flightRecorder.record('tool_result', `Tool completed`, { ...resp });
-            this.refreshStagedPatchesUI();
-            this.flightRecorderTreeProvider?.refresh();
-          },
-          onTurnComplete: (result) => {
-            const isError = result.status === 'failed' || Boolean(result.error);
-            const staged = this.patchManager.getAllStaged();
-            const applied = staged.filter((p) => p.status === 'applied');
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let shouldRetryTransient = false;
+        let transientErrorObj: Error | undefined;
+        let hasExecutedSideEffectTools = false;
 
-            if (isError) {
-              this.postExecutionStep('failed');
-              this._view?.webview.postMessage({
-                type: 'error',
-                message: result.error || 'Agent turn failed during execution',
-              });
-              this._view?.webview.postMessage({ type: 'turnDone', result });
-              this.compileAndSendProofOfChange(promptText, taskId, false);
-              return;
-            }
-
-            if (staged.length > 0) {
-              if (applied.length > 0) {
-                this.postExecutionStep('proven');
-              } else {
+        await this.trueforge.runTurn(
+          this.activeSessionId,
+          fullPrompt,
+          {
+            onTokenDelta: (delta) => {
+              accumulatedTokens += delta.length;
+              this._view?.webview.postMessage({ type: 'tokenDelta', delta });
+            },
+            onToolCall: (call) => {
+              if (
+                call.name.includes('propose') ||
+                call.name.includes('apply') ||
+                call.name.includes('revert') ||
+                call.name.includes('run_terminal')
+              ) {
+                hasExecutedSideEffectTools = true;
+              }
+              if (call.name.includes('search') || call.name.includes('find') || call.name.includes('list')) {
+                this.postExecutionStep('searching');
+              } else if (call.name.includes('read') || call.name.includes('inspect')) {
+                this.postExecutionStep('inspecting');
+              } else if (call.name.includes('propose')) {
                 this.postExecutionStep('staging');
+              } else if (call.name.includes('test')) {
+                this.postExecutionStep('testing');
               }
-            } else {
-              // Read-only analysis turn with no staged file mutations
-              if (accumulatedTokens > 0) {
-                this.postExecutionStep('completed');
-              } else {
-                this.postExecutionStep('unverified');
-                this._view?.webview.postMessage({
-                  type: 'log',
-                  message: 'Notice: Agent completed turn without generating response tokens or patch proposals.',
-                });
+              this._view?.webview.postMessage({ type: 'toolCall', call });
+              this.flightRecorder.record('tool_call', `Agent invoked tool: ${call.name}`, { ...call });
+              this.flightRecorderTreeProvider?.refresh();
+            },
+            onToolResponse: (resp) => {
+              this.recordedToolResults.push({ id: resp.id, result: resp.result });
+              this._view?.webview.postMessage({ type: 'toolResponse', resp });
+              this.flightRecorder.record('tool_result', `Tool completed`, { ...resp });
+              this.refreshStagedPatchesUI();
+              this.flightRecorderTreeProvider?.refresh();
+            },
+            onTurnComplete: (result) => {
+              if (result.error) {
+                const rawErr = new Error(result.error);
+                if (this.modelRescue.isTransientError(rawErr) && !hasExecutedSideEffectTools && attempt < 2) {
+                  shouldRetryTransient = true;
+                  transientErrorObj = rawErr;
+                  return;
+                }
               }
-            }
 
-            this._view?.webview.postMessage({ type: 'turnDone', result });
-            this.compileAndSendProofOfChange(promptText, taskId, staged.length === 0);
+              const isError = result.status === 'failed' || Boolean(result.error);
+              const staged = this.patchManager.getAllStaged();
+              const applied = staged.filter((p) => p.status === 'applied');
+
+              if (isError) {
+                this.postExecutionStep('failed');
+                const enhanced = this.modelRescue.enhanceError(
+                  new Error(result.error || 'Agent turn failed during execution'),
+                  'Gemini Agent Turn'
+                );
+                this._view?.webview.postMessage({
+                  type: 'error',
+                  message: enhanced.message,
+                });
+                this._view?.webview.postMessage({ type: 'turnDone', result });
+                this.compileAndSendProofOfChange(promptText, taskId, false);
+                return;
+              }
+
+              this.conversationHistoryTokens +=
+                this.auction.estimateTokens(promptText) + Math.ceil(accumulatedTokens / 4);
+
+              if (staged.length > 0) {
+                if (applied.length > 0) {
+                  this.postExecutionStep('proven');
+                } else {
+                  this.postExecutionStep('staging');
+                }
+              } else {
+                // Read-only analysis turn with no staged file mutations
+                if (accumulatedTokens > 0) {
+                  this.postExecutionStep('completed');
+                } else {
+                  this.postExecutionStep('unverified');
+                  this._view?.webview.postMessage({
+                    type: 'log',
+                    message: 'Notice: Agent completed turn without generating response tokens or patch proposals.',
+                  });
+                }
+              }
+
+              this._view?.webview.postMessage({ type: 'turnDone', result });
+              this.compileAndSendProofOfChange(promptText, taskId, staged.length === 0);
+            },
           },
-        },
-        this.currentAbortController.signal
-      );
+          this.currentAbortController.signal
+        );
+
+        if (shouldRetryTransient && attempt < 2) {
+          const providerWait = this.modelRescue.extractRetryDelayMs(transientErrorObj);
+          const baseBackoff = 2000 * Math.pow(2, attempt);
+          const jitter = Math.round(Math.random() * 800);
+          const waitMs = providerWait ? Math.min(providerWait + jitter, 20000) : Math.min(baseBackoff + jitter, 15000);
+          const cleanReason = this.modelRescue.sanitizeCredentials(transientErrorObj?.message ?? 'Transient provider error');
+          this._view?.webview.postMessage({
+            type: 'log',
+            message: `Transient provider status encountered (${cleanReason}). ModelRescue bounded retry ${attempt + 1}/2 in ${(waitMs / 1000).toFixed(1)}s...`,
+          });
+          await this.modelRescue.sleepWithAbort(waitMs, this.currentAbortController.signal);
+          continue;
+        }
+        break;
+      }
     } catch (err: any) {
       if (err.name === 'AbortError') {
         this.postExecutionStep('cancelled');
-        this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user. Workspace state fully preserved.' });
+        this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user. Workspace state and conversation history fully preserved.' });
       } else {
         this.postExecutionStep('failed');
-        this._view?.webview.postMessage({ type: 'error', message: err.message });
+        const enhanced = this.modelRescue.enhanceError(err, 'Agent Execution');
+        this._view?.webview.postMessage({ type: 'error', message: enhanced.message });
       }
     } finally {
       this._view?.webview.postMessage({ type: 'turnEnded' });
@@ -947,11 +1018,12 @@ Always explain the purpose, rationale, and expected impact of any changes before
       receiptBox.className = 'receipt-box';
       const totalBudget = r.tokenBudget || 16000;
       const codeBudget = r.codeBudget || Math.round(totalBudget * 0.7);
-      const codePct = Math.min(100, Math.round((r.totalTokensUsed / codeBudget) * 100));
-
-      const reservedDesc = r.reservedCapacity 
-        ? ' (Reserved: ' + r.reservedCapacity.instructions + ' prompt + ' + r.reservedCapacity.output + ' output)'
-        : '';
+      const retrievedCodeTok = r.retrievedCodeTokens ?? r.totalTokensUsed ?? 0;
+      const estimatedReqTok = r.estimatedRequestTokens ?? retrievedCodeTok;
+      const reservedOutTok = r.reservedOutputTokens ?? (r.reservedCapacity ? r.reservedCapacity.output : 0);
+      const safetyMarginTok = r.safetyMarginTokens ?? (r.reservedCapacity ? (r.reservedCapacity.safetyMargin || 0) : 0);
+      const totalCapacityTok = r.totalContextCapacity ?? totalBudget;
+      const codePct = Math.min(100, Math.round((retrievedCodeTok / codeBudget) * 100));
 
       let selectedList = r.selectedFiles.map(f => 
         '<li style="margin-bottom:2px;"><code>' + f.filePath + '</code> (' + f.estimatedTokens + ' tok, score: ' + f.score + ') - <em>' + escapeHtml(f.relevanceRationale) + '</em></li>'
@@ -961,12 +1033,22 @@ Always explain the purpose, rationale, and expected impact of any changes before
         '<li><code>' + e.filePath + '</code>: ' + escapeHtml(e.exclusionReason) + '</li>'
       ).join('');
 
+      const breakdownHtml =
+        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:3px 8px; font-size:10px; color:#cbd5e1; margin:4px 0 6px 0; padding:4px 6px; background:rgba(0,0,0,0.25); border-radius:4px;">' +
+          '<span><strong>1. Retrieved Code:</strong> ' + retrievedCodeTok + ' tok</span>' +
+          '<span><strong>2. Est. Complete Req:</strong> ' + estimatedReqTok + ' tok</span>' +
+          '<span><strong>3. Reserved Output:</strong> ' + reservedOutTok + ' tok</span>' +
+          '<span><strong>4. Safety Margin:</strong> ' + safetyMarginTok + ' tok</span>' +
+          '<span style="grid-column:span 2;"><strong>5. Total Context Capacity:</strong> ' + totalCapacityTok.toLocaleString() + ' tok (Auction Ceiling: ' + totalBudget.toLocaleString() + ' tok)</span>' +
+        '</div>';
+
       receiptBox.innerHTML = 
         '<div class="receipt-title">' +
           '<span>📋 Context Selection Receipt</span>' +
-          '<span>' + r.totalTokensUsed + ' / ' + codeBudget + ' code tok (' + codePct + '%)' + reservedDesc + '</span>' +
+          '<span>' + retrievedCodeTok + ' / ' + codeBudget + ' code tok (' + codePct + '%)</span>' +
         '</div>' +
         '<div class="token-meter"><div class="token-meter-fill" style="width:' + codePct + '%;"></div></div>' +
+        breakdownHtml +
         '<details style="cursor:pointer;"><summary><strong>' + r.selectedFiles.length + ' High-Relevance Selected Files</strong></summary>' +
           '<ul style="margin:4px 0; padding-left:16px;">' + selectedList + '</ul>' +
         '</details>' +

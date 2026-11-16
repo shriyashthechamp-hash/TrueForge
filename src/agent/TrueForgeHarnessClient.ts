@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { TrueForge, TrueForgeError } from '@truefoundry/trueforge-sdk';
 import { TrueForgeConnectionError } from '../shared/errors.js';
 
@@ -28,6 +30,9 @@ export interface TurnCallbacks {
 
 export class TrueForgeHarnessClient {
   private client: TrueForge;
+  private geminiAutoSyncAttempted = false;
+  private sessionInstructions = new Map<string, string | undefined>();
+  private static quotaExhaustedModels = new Set<string>();
 
   constructor(
     private readonly baseUrl = 'http://localhost:8790',
@@ -57,31 +62,165 @@ export class TrueForgeHarnessClient {
     }
   }
 
+  /**
+   * Resolves GEMINI_API_KEY from process.env or local gitignored .env files without logging secrets.
+   */
+  public resolveGeminiApiKeyFromEnvironment(workspaceRoot?: string): string | undefined {
+    const fromEnv = process.env.GEMINI_API_KEY?.trim();
+    if (fromEnv && fromEnv !== 'your_gemini_api_key_here') {
+      return fromEnv;
+    }
+
+    const candidateDirs = [
+      workspaceRoot,
+      process.cwd(),
+      path.resolve(process.cwd(), 'FORGE-SENTINEL'),
+      path.resolve(process.cwd(), '..'),
+      path.resolve(process.cwd(), '..', 'FORGE-SENTINEL'),
+    ].filter((d): d is string => Boolean(d));
+
+    for (const dir of candidateDirs) {
+      for (const fileName of ['.env', '.env.local']) {
+        const envPath = path.join(dir, fileName);
+        try {
+          if (fs.existsSync(envPath)) {
+            const raw = fs.readFileSync(envPath, 'utf8');
+            for (const line of raw.split('\n')) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('#')) continue;
+              const match = trimmed.match(/^GEMINI_API_KEY\s*=\s*(.+)$/);
+              if (match) {
+                const val = match[1].trim().replace(/^['"]|['"]$/g, '');
+                if (val && val !== 'your_gemini_api_key_here') {
+                  return val;
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore unreadable .env files
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Registers or updates Google Gemini (gemini-3.8-flash) in TrueForge's centralized model provider store
+   * when GEMINI_API_KEY is available in the environment or .env.
+   */
+  public async ensureGeminiProviderConfigured(apiKey?: string, workspaceRoot?: string): Promise<boolean> {
+    const key = apiKey ?? this.resolveGeminiApiKeyFromEnvironment(workspaceRoot);
+    if (!key) {
+      return false;
+    }
+
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/v1/settings/model-providers`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          manifest: {
+            type: 'custom',
+            name: 'google',
+            base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+            auth: {
+              api_key: key,
+            },
+            models: [
+              {
+                model_id: 'gemini-3.8-flash',
+                name: 'gemini-3-8-flash',
+                properties: {
+                  context_length: 1048576,
+                  max_output_tokens: 65536,
+                },
+              },
+              {
+                model_id: 'gemini-2.5-flash',
+                name: 'gemini-2-5-flash',
+                properties: {
+                  context_length: 1048576,
+                  max_output_tokens: 65536,
+                },
+              },
+              {
+                model_id: 'gemini-flash-lite-latest',
+                name: 'gemini-flash-lite-latest',
+                properties: {
+                  context_length: 1048576,
+                  max_output_tokens: 65536,
+                },
+              },
+            ],
+          },
+        }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
   public formatModelDisplayName(name: string, modelId?: string): string {
-    const raw = modelId || name;
-    if (raw.includes('qwen3.8-27b') || name.includes('qwen-3-8-27b')) {
+    const raw = (modelId || name).toLowerCase();
+    const lowerName = name.toLowerCase();
+
+    if (raw.includes('gemini-3.8-flash') || lowerName.includes('gemini-3-8-flash')) {
+      return 'Gemini 3.8 Flash (Google)';
+    }
+    if (raw.includes('gemini-flash-lite') || lowerName.includes('gemini-flash-lite')) {
+      return 'Gemini Flash Lite (Google)';
+    }
+    if (raw.includes('gemini-3.7-flash') || lowerName.includes('gemini-3-7-flash')) {
+      return 'Gemini 3.7 Flash (Google)';
+    }
+    if (raw.includes('gemini-3.6-flash') || lowerName.includes('gemini-3-6-flash')) {
+      return 'Gemini 3.6 Flash (Google)';
+    }
+    if (raw.includes('gemini-3.5-flash') || lowerName.includes('gemini-3-5-flash')) {
+      return 'Gemini 3.5 Flash (Google)';
+    }
+    if (raw.includes('gemini') || lowerName.startsWith('google-gemini/') || lowerName.startsWith('google/')) {
+      const cleanGemini = (modelId || name)
+        .replace(/^google-gemini\//i, '')
+        .replace(/^google\//i, '');
+      return `${cleanGemini} (Google)`;
+    }
+    if (raw.includes('qwen3.8-27b') || lowerName.includes('qwen-3-8-27b')) {
       return 'Qwen 3.8 27B (Groq)';
     }
-    if (raw.includes('llama-3.1-8b-instant') || name.includes('llama-3-1-8b')) {
+    if (raw.includes('llama-3.1-8b-instant') || lowerName.includes('llama-3-1-8b')) {
       return 'Llama 3.1 8B Instant (Groq)';
     }
-    if (raw.includes('gpt-oss-120b') || name.includes('gpt-oss-120b')) {
+    if (raw.includes('gpt-oss-120b') || lowerName.includes('gpt-oss-120b')) {
       return 'GPT-OSS 120B (Groq)';
     }
-    if (raw.includes('llama-3.3-70b')) {
-      return 'Llama 3.3 70B (Unavailable)';
+    if (raw.includes('gpt-oss-20b') || lowerName.includes('gpt-oss-20b')) {
+      return 'GPT-OSS 20B (Groq)';
     }
-    const clean = name.replace(/^groq\//, '').replace(/^openai\//, '');
+    if (raw.includes('llama-3.3-70b') || raw.includes('llama-3.1-8b')) {
+      return `${modelId || name} (Unavailable)`;
+    }
+    const clean = name
+      .replace(/^google-gemini\//, '')
+      .replace(/^google\//, '')
+      .replace(/^groq\//, '')
+      .replace(/^openai\//, '');
     return clean.charAt(0).toUpperCase() + clean.slice(1);
   }
 
   public async getAvailableModels(): Promise<TrueForgeModelInfo[]> {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/v1/models`, {
+      let resp = await fetch(`${this.baseUrl}/api/v1/models`, {
         headers: { Authorization: `Bearer ${this.token}` },
       });
       if (!resp.ok) return [];
-      const json = (await resp.json()) as {
+      let json = (await resp.json()) as {
         data?: Array<{
           name: string;
           model_id: string;
@@ -90,21 +229,50 @@ export class TrueForgeHarnessClient {
         }>;
       };
 
-      const raw = json.data ?? [];
+      let raw = json.data ?? [];
+      const hasGemini = raw.some(
+        (m) => m.model_id === 'gemini-3.8-flash' || m.name.includes('gemini-3-8-flash') || m.name.includes('gemini-3.8-flash')
+      );
+
+      if (!hasGemini && !this.geminiAutoSyncAttempted) {
+        this.geminiAutoSyncAttempted = true;
+        const synced = await this.ensureGeminiProviderConfigured();
+        if (synced) {
+          resp = await fetch(`${this.baseUrl}/api/v1/models`, {
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          if (resp.ok) {
+            json = (await resp.json()) as typeof json;
+            raw = json.data ?? [];
+          }
+        }
+      }
+
       return raw.map((m) => {
-        // Disallow deprecated/unavailable models that return 404 from Groq
-        const isUnavailable = m.name.includes('llama-3-3-70b-versatile') || m.model_id.includes('llama-3.3-70b-versatile');
-        const isQwen = m.name.includes('qwen-3-8-27b') || m.model_id.includes('qwen');
+        // Disallow deprecated/unavailable models that return 404
+        const isUnavailable =
+          m.name.includes('llama-3-3-70b-versatile') ||
+          m.model_id.includes('llama-3.3-70b-versatile') ||
+          m.name.includes('llama-3-1-8b-instant') ||
+          m.model_id.includes('llama-3.1-8b-instant');
+
+        const isGemini38 =
+          m.model_id === 'gemini-3.8-flash' ||
+          m.name.includes('gemini-3-8-flash') ||
+          m.name.includes('gemini-3.8-flash');
+
+        const rawProvider = m.provider?.name ?? m.name.split('/')[0] ?? 'google';
+        const normalizedProvider = rawProvider === 'google-gemini' ? 'google' : rawProvider;
 
         return {
           name: m.name,
           modelId: m.model_id,
           displayName: this.formatModelDisplayName(m.name, m.model_id),
-          provider: m.provider?.name ?? m.name.split('/')[0] ?? 'groq',
-          contextLength: m.properties?.context_length ?? 131072,
-          maxOutputTokens: m.properties?.max_output_tokens ?? 8192,
+          provider: normalizedProvider,
+          contextLength: m.properties?.context_length ?? (isGemini38 ? 1048576 : 131072),
+          maxOutputTokens: m.properties?.max_output_tokens ?? (isGemini38 ? 65536 : 8192),
           isAvailable: !isUnavailable,
-          isPreferred: isQwen,
+          isPreferred: isGemini38,
         };
       });
     } catch {
@@ -116,26 +284,44 @@ export class TrueForgeHarnessClient {
     const models = await this.getAvailableModels();
 
     if (preferredName) {
-      const direct = models.find((m) => m.name === preferredName && m.isAvailable);
+      const direct = models.find(
+        (m) => (m.name === preferredName || m.modelId === preferredName) && m.isAvailable
+      );
       if (direct) return direct;
     }
 
-    // 1. Highest priority: Verified active Qwen model
-    const qwen = models.find((m) => m.isPreferred && m.isAvailable);
-    if (qwen) return qwen;
+    // 1. Highest priority: Primary Google Gemini 3.8 Flash (gemini-3.8-flash)
+    const gemini38 = models.find(
+      (m) =>
+        (m.modelId === 'gemini-3.8-flash' ||
+          m.name.includes('gemini-3-8-flash') ||
+          m.name.includes('gemini-3.8-flash')) &&
+        m.isAvailable
+    );
+    if (gemini38) return gemini38;
 
-    // 2. Next priority: Any non-blacklisted available model
-    const anyUsable = models.find((m) => m.isAvailable);
+    // 2. Any other preferred or available Google Gemini model
+    const anyGemini = models.find(
+      (m) => (m.provider.toLowerCase().includes('google') || m.name.includes('gemini')) && m.isAvailable
+    );
+    if (anyGemini) return anyGemini;
+
+    // 3. Any explicitly marked preferred available model (BYO-model compatibility)
+    const preferred = models.find((m) => m.isPreferred && m.isAvailable);
+    if (preferred) return preferred;
+
+    // 4. Next priority: Any non-blacklisted available model (only if no Gemini model is registered)
+    const anyUsable = models.find((m) => m.isAvailable && !m.name.startsWith('groq/'));
     if (anyUsable) return anyUsable;
 
-    // Fallback safe default
+    // Authoritative primary fallback: Google Gemini 3.8 Flash
     return {
-      name: 'groq/qwen-3-8-27b',
-      modelId: 'qwen/qwen3.8-27b',
-      displayName: 'Qwen 3.8 27B (Groq)',
-      provider: 'groq',
-      contextLength: 131072,
-      maxOutputTokens: 8192,
+      name: 'google-gemini/gemini-3-8-flash',
+      modelId: 'gemini-3.8-flash',
+      displayName: 'Gemini 3.8 Flash (Google)',
+      provider: 'google',
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
       isAvailable: true,
       isPreferred: true,
     };
@@ -173,13 +359,35 @@ export class TrueForgeHarnessClient {
     }
   }
 
+  public resolveFallbackModel(): string {
+    if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-flash-lite-latest')) {
+      return 'google/gemini-flash-lite-latest';
+    }
+    if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-2.5-flash')) {
+      return 'google/gemini-2-5-flash';
+    }
+    return 'google/gemini-flash-lite-latest';
+  }
+
   public async ensureNamedAgent(options?: {
     modelName?: string;
     instructions?: string;
     requireToolApproval?: boolean;
   }): Promise<string> {
     let selectedModel = options?.modelName;
-    if (!selectedModel) {
+    if (
+      !selectedModel ||
+      TrueForgeHarnessClient.quotaExhaustedModels.has(selectedModel) ||
+      TrueForgeHarnessClient.quotaExhaustedModels.has(selectedModel.toLowerCase()) ||
+      ((selectedModel.includes('gemini-3-8-flash') || selectedModel.includes('gemini-3.8-flash')) &&
+        (TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-3.8-flash') ||
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-3-8-flash'))) ||
+      ((selectedModel.includes('gemini-2-5-flash') || selectedModel.includes('gemini-2.5-flash')) &&
+        (TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-2.5-flash') ||
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-2-5-flash')))
+    ) {
+      selectedModel = this.resolveFallbackModel();
+    } else if (!selectedModel) {
       const authoritative = await this.resolveAuthoritativeModel();
       selectedModel = authoritative.name;
     }
@@ -276,7 +484,9 @@ Execute tests via run_test_command to verify your work.`;
         },
       });
 
-      return sessionResponse.data.id;
+      const id = sessionResponse.data.id;
+      this.sessionInstructions.set(id, options?.instructions);
+      return id;
     } catch (err: any) {
       if (err instanceof TrueForgeError) {
         throw new Error(`TrueForge Session Creation Failed [${err.statusCode}]: ${err.message}`, {
@@ -287,11 +497,35 @@ Execute tests via run_test_command to verify your work.`;
     }
   }
 
+  public isFallbackEligible(errorText: string): boolean {
+    const lower = errorText.toLowerCase();
+    return (
+      lower.includes('429') ||
+      lower.includes('too many requests') ||
+      lower.includes('rate limit') ||
+      lower.includes('model error') ||
+      lower.includes('resource_exhausted') ||
+      lower.includes('quota exceeded') ||
+      lower.includes('free_tier') ||
+      lower.includes('generate_content_free_tier_requests') ||
+      lower.includes('exceeded your current quota') ||
+      lower.includes('503') ||
+      lower.includes('502') ||
+      lower.includes('504') ||
+      lower.includes('high demand') ||
+      lower.includes('spikes in demand') ||
+      lower.includes('service unavailable') ||
+      lower.includes('headers timeout') ||
+      lower.includes('overloaded')
+    );
+  }
+
   public async runTurn(
     sessionId: string,
     prompt: string,
     callbacks?: TurnCallbacks,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    allowFallback = true
   ): Promise<void> {
     try {
       const stream = await this.client.sessions.createTurnStream(
@@ -306,6 +540,8 @@ Execute tests via run_test_command to verify your work.`;
       let currentTurnId = '';
       let receivedTokensCount = 0;
       let lastErrorMessage = '';
+      const streamingToolCalls = new Map<string, { id: string; name: string; rawArgs: string }>();
+      const emittedToolCallIds = new Set<string>();
 
       for await (const event of stream) {
         switch (event.type as string) {
@@ -317,21 +553,34 @@ Execute tests via run_test_command to verify your work.`;
           case 'model.message.delta': {
             const rawCalls = (event as any).toolCalls ?? (event as any).tool_calls ?? [];
             for (const call of rawCalls) {
+              const callId = call.id ?? `idx_${call.index ?? 0}`;
               const name = call.toolInfo?.name ?? call.function?.name ?? call.name ?? '';
-              let args = call.function?.arguments ?? call.arguments ?? call.args ?? {};
-              if (typeof args === 'string' && args.trim().length > 0) {
-                try {
-                  args = JSON.parse(args);
-                } catch {
-                  // partial json in streaming delta
-                }
+              const argChunk = call.function?.arguments ?? call.arguments ?? call.args;
+
+              const existing = streamingToolCalls.get(callId) ?? { id: callId, name: '', rawArgs: '' };
+              if (name) existing.name = name;
+              if (typeof argChunk === 'string') {
+                existing.rawArgs += argChunk;
+              } else if (argChunk && typeof argChunk === 'object') {
+                existing.rawArgs = JSON.stringify(argChunk);
               }
-              if (name) {
-                callbacks?.onToolCall?.({
-                  id: call.id ?? '',
-                  name,
-                  args,
-                });
+              streamingToolCalls.set(callId, existing);
+
+              if (existing.name && !emittedToolCallIds.has(callId)) {
+                let parsedArgs: unknown = {};
+                if (existing.rawArgs.trim().length > 0) {
+                  try {
+                    parsedArgs = JSON.parse(existing.rawArgs);
+                    emittedToolCallIds.add(callId);
+                    callbacks?.onToolCall?.({
+                      id: call.id ?? callId,
+                      name: existing.name,
+                      args: parsedArgs,
+                    });
+                  } catch {
+                    // Wait for full JSON arguments in subsequent deltas or model.message
+                  }
+                }
               }
             }
 
@@ -347,20 +596,24 @@ Execute tests via run_test_command to verify your work.`;
           case 'assistant.message': {
             const rawCalls = (event as any).tool_calls ?? (event as any).toolCalls ?? [];
             for (const call of rawCalls) {
+              const callId = call.id ?? '';
               const name = call.function?.name ?? call.name ?? '';
               let args = call.function?.arguments ?? call.arguments ?? call.args ?? {};
               if (typeof args === 'string') {
                 try {
                   args = JSON.parse(args);
                 } catch {
-                  // keep raw
+                  // keep raw string if not valid JSON
                 }
               }
-              callbacks?.onToolCall?.({
-                id: call.id ?? '',
-                name,
-                args,
-              });
+              if (name && (!callId || !emittedToolCallIds.has(callId))) {
+                if (callId) emittedToolCallIds.add(callId);
+                callbacks?.onToolCall?.({
+                  id: callId,
+                  name,
+                  args,
+                });
+              }
             }
             const directContent = (event as any).content ?? (event as any).text;
             if (directContent && typeof directContent === 'string' && rawCalls.length === 0) {
@@ -394,6 +647,25 @@ Execute tests via run_test_command to verify your work.`;
             break;
           }
 
+          case 'tool.response_required': {
+            const toolCalls = (event as any).toolCalls ?? [];
+            for (const call of toolCalls) {
+              if (currentTurnId) {
+                await this.client.sessions.createTurnEvents(sessionId, currentTurnId, {
+                  events: [
+                    {
+                      type: 'user.tool_response',
+                      threadId: (event as any).threadId ?? 'main',
+                      toolCallId: call.id,
+                      content: JSON.stringify({ response: 'Proceed with analysis of workspace files' }),
+                    },
+                  ],
+                });
+              }
+            }
+            break;
+          }
+
           case 'tool.response': {
             callbacks?.onToolResponse?.({
               id: (event as any).id ?? '',
@@ -410,10 +682,60 @@ Execute tests via run_test_command to verify your work.`;
           }
 
           case 'turn.done': {
+            // Flush any pending tool calls from streaming deltas that weren't emitted yet
+            for (const [callId, pending] of streamingToolCalls.entries()) {
+              if (pending.name && !emittedToolCallIds.has(callId)) {
+                let parsedArgs: unknown = {};
+                try {
+                  parsedArgs = pending.rawArgs ? JSON.parse(pending.rawArgs) : {};
+                } catch {
+                  parsedArgs = pending.rawArgs;
+                }
+                emittedToolCallIds.add(callId);
+                callbacks?.onToolCall?.({
+                  id: pending.id,
+                  name: pending.name,
+                  args: parsedArgs,
+                });
+              }
+            }
+
             const state = (event as any).state;
             const rawStatus = state?.status ?? (event as any).status ?? 'completed';
             const errorMsg = state?.message ?? state?.error ?? (event as any).error ?? lastErrorMessage;
             const isFailure = rawStatus === 'error' || rawStatus === 'failed' || Boolean(errorMsg);
+
+            if (isFailure && allowFallback && errorMsg && this.isFallbackEligible(String(errorMsg))) {
+              const trapped = String(errorMsg);
+              if (trapped.includes('gemini-3.8-flash') || trapped.includes('gemini-3-8-flash')) {
+                TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+              }
+              if (trapped.includes('gemini-2.5-flash') || trapped.includes('gemini-2-5-flash')) {
+                TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-2.5-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-2-5-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-2-5-flash');
+              }
+              TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
+              TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
+
+              const fallbackModel = this.resolveFallbackModel();
+              console.warn(
+                `[ModelRescue] Primary inference failure trapped: "${errorMsg}". Rescuing turn via fallback model "${fallbackModel}"...`
+              );
+              const preservedInstructions = this.sessionInstructions.get(sessionId);
+              try {
+                await this.ensureNamedAgent({ modelName: fallbackModel, instructions: preservedInstructions });
+                const fallbackSessionId = await this.createSession({
+                  modelName: fallbackModel,
+                  instructions: preservedInstructions,
+                });
+                return await this.runTurn(fallbackSessionId, prompt, callbacks, abortSignal, false);
+              } catch (fallbackErr) {
+                console.warn('[ModelRescue] Fallback model switch failed:', fallbackErr);
+              }
+            }
 
             callbacks?.onTurnComplete?.({
               turnId: currentTurnId,
@@ -432,6 +754,21 @@ Execute tests via run_test_command to verify your work.`;
     } catch (err: any) {
       if (err.name === 'AbortError') {
         return;
+      }
+      const errText = String(err?.message ?? err ?? '');
+      if (allowFallback && this.isFallbackEligible(errText)) {
+        TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
+        TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
+        TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+        console.warn(
+          `[ModelRescue] Primary inference failure trapped: "${errText}". Rescuing turn via fallback model "google/gemini-2-5-flash"...`
+        );
+        try {
+          await this.ensureNamedAgent({ modelName: 'google/gemini-2-5-flash' });
+          return await this.runTurn(sessionId, prompt, callbacks, abortSignal, false);
+        } catch (fallbackErr) {
+          console.warn('[ModelRescue] Fallback turn execution failed:', fallbackErr);
+        }
       }
       callbacks?.onError?.(err);
       throw err;

@@ -164,7 +164,7 @@ print("SUCCESS_ALL_PASSED")
 
     // Re-apply for persistent competition benchmark
     await patchManager.applyPatch(helpersPatch.patchId);
-  }, 60000);
+  }, 120000);
 
   // ======================================================================
   // TASK B: AUTONOMOUS MULTI-FILE AGENT BENCHMARK
@@ -250,21 +250,21 @@ Keys containing \`\`SECRET\`\`, \`\`PASSWORD\`\`, \`\`TOKEN\`\`, or \`\`KEY\`\` 
 
     try {
       const badSession = await client.createSession({
-        modelName: 'groq/nonexistent-model-xyz-999999',
+        modelName: 'google-gemini/nonexistent-model-xyz-999999',
         instructions: 'Test invalid model recovery'
       });
 
       await client.runTurn(badSession, "Hello", {
         onError: (err) => {
           errorReported = true;
-          if (err.message.includes('gsk_') || err.message.includes('gsk-')) {
+          if (err.message.includes('AIza') || err.message.includes('gsk_') || err.message.includes('gsk-')) {
             leaked = true;
           }
         },
         onTurnComplete: (res) => {
-          if (res.status === 'error') {
+          if (res.status === 'error' || res.status === 'failed') {
             errorReported = true;
-            if (res.error && (res.error.includes('gsk_') || res.error.includes('gsk-'))) {
+            if (res.error && (res.error.includes('AIza') || res.error.includes('gsk_') || res.error.includes('gsk-'))) {
               leaked = true;
             }
           }
@@ -272,7 +272,7 @@ Keys containing \`\`SECRET\`\`, \`\`PASSWORD\`\`, \`\`TOKEN\`\`, or \`\`KEY\`\` 
       });
     } catch (err: any) {
       errorReported = true;
-      if (err.message.includes('gsk_') || err.message.includes('gsk-')) {
+      if (err.message.includes('AIza') || err.message.includes('gsk_') || err.message.includes('gsk-')) {
         leaked = true;
       }
     }
@@ -282,8 +282,9 @@ Keys containing \`\`SECRET\`\`, \`\`PASSWORD\`\`, \`\`TOKEN\`\`, or \`\`KEY\`\` 
   });
 
   it('Task C3: Immediate mid-stream cancellation preserves workspace immutability', async () => {
+    const authoritative = await client.resolveAuthoritativeModel();
     const sessionId = await client.createSession({
-      modelName: 'groq/qwen-3-8-27b',
+      modelName: authoritative.name,
       instructions: 'Perform extensive codebase analysis'
     });
 

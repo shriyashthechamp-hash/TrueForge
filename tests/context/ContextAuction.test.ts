@@ -46,6 +46,23 @@ describe('ContextAuction (System 02: Context Assembly & Selection)', () => {
     expect(receipt.selectedFiles[0].filePath).toBe('helpers.py');
     expect(contextBundle).toContain('def get_debug_flag():');
     expect(receipt.totalTokensUsed).toBeLessThanOrEqual(2000);
+    expect(receipt.retrievedCodeTokens).toBe(receipt.totalTokensUsed);
+    expect(receipt.estimatedRequestTokens).toBeGreaterThanOrEqual(receipt.retrievedCodeTokens);
+    expect(receipt.reservedOutputTokens).toBeGreaterThanOrEqual(0);
+    expect(receipt.safetyMarginTokens).toBeGreaterThanOrEqual(0);
+    expect(receipt.totalContextCapacity).toBeGreaterThanOrEqual(2000);
+  });
+
+  it('deduplicates unchanged tool results to prevent repeated token waste', () => {
+    const largeOutput = 'File: src/app.py\n' + 'def handler(): return True\n'.repeat(20);
+    const dedup = auction.deduplicateToolResults([
+      { id: 'call_1', toolName: 'read_file', result: largeOutput },
+      { id: 'call_2', toolName: 'read_file', result: largeOutput },
+    ]);
+
+    expect(dedup.deduplicatedCount).toBe(1);
+    expect(dedup.savedTokens).toBeGreaterThan(0);
+    expect(String(dedup.deduplicated[1].result)).toContain('Unchanged tool output identical to call call_1');
   });
 
   it('boosts dependency neighbors and reports excluded candidates when budget overflows', async () => {

@@ -117,3 +117,4 @@ export class StagedPatchesTreeDataProvider implements vscode.TreeDataProvider<St
     return Promise.resolve([]);
   }
 }
+

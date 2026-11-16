@@ -17,10 +17,10 @@
   "main": "./dist/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:@truefoundry/trueforge-sdk --format=cjs --platform=node --target=node20",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --watch",
     "compile": "tsc -p ./",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -38,6 +38,7 @@
     "vitest": "^3.0.0"
   },
   "activationEvents": [
+    "onStartupFinished",
     "onView:forge-sentinel.agentPanel",
     "onCommand:forge-sentinel.inlineEdit",
     "onCommand:forge-sentinel.openPanel",
@@ -80,6 +81,11 @@
       {
         "command": "forge-sentinel.openPanel",
         "title": "Sentinel: Open Command Center",
+        "category": "FORGE//SENTINEL"
+      },
+      {
+        "command": "forge-sentinel.analyzeArchitecture",
+        "title": "Sentinel: Analyze Architecture (Read-Only)",
         "category": "FORGE//SENTINEL"
       },
       {

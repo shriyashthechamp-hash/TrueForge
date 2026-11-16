@@ -14,12 +14,45 @@ describe('ModelRescue (System 06: Resilience & Recovery)', () => {
   });
 
   it('sanitizes credentials and redacts API keys from error outputs', () => {
-    const raw = 'Failed with token gsk_dummyMockKeyForTestRedactionOnly999 and Bearer eyJhbGciOiJIUzI1NiJ9.abc';
+    const raw =
+      'Failed with Gemini key AIzaSyDummyTestKeyForRedactionVerificationOnly12345, Groq token gsk_dummyMockKeyForTestRedactionOnly999 and Bearer eyJhbGciOiJIUzI1NiJ9.abc';
     const sanitized = rescue.sanitizeCredentials(raw);
 
+    expect(sanitized).not.toContain('AIzaSyDummyTestKeyForRedactionVerificationOnly12345');
+    expect(sanitized).toContain('[REDACTED_GEMINI_KEY]');
     expect(sanitized).not.toContain('gsk_dummyMockKeyForTestRedactionOnly999');
     expect(sanitized).toContain('[REDACTED_GROQ_KEY]');
     expect(sanitized).toContain('Bearer [REDACTED_TOKEN]');
+  });
+
+  it('extracts provider retry guidance and surfaces free-tier quota diagnostics', () => {
+    const quotaErr = {
+      statusCode: 429,
+      message: 'RESOURCE_EXHAUSTED: Quota exceeded for generate_content_free_tier_requests. Please retry in 24.5s.',
+    };
+    expect(rescue.categorizeError(quotaErr)).toBe('RATE_LIMITED');
+    expect(rescue.isQuotaExhausted(quotaErr)).toBe(true);
+    expect(rescue.extractRetryDelayMs(quotaErr)).toBe(24500);
+
+    const enhanced = rescue.enhanceError(quotaErr, 'Gemini Turn');
+    expect(enhanced.message).toContain('[Gemini Free-Tier Quota Exhausted]');
+    expect(enhanced.message).toContain('25s');
+  });
+
+  it('aborts retry wait immediately when abortSignal fires', async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30);
+
+    await expect(
+      rescue.executeWithRetry(
+        async () => {
+          const err: any = new Error('503 Service Unavailable');
+          err.status = 503;
+          throw err;
+        },
+        { initialDelayMs: 5000, maxRetries: 2, abortSignal: controller.signal }
+      )
+    ).rejects.toThrow(/cancelled/i);
   });
 
   it('retries transient failures with exponential backoff and succeeds', async () => {

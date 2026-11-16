@@ -224,3 +224,4 @@ All 10 Vitest test suites (49 individual tests) pass with 100% fidelity:
 ### Conclusion & Production Certification
 
 FORGE//SENTINEL has achieved complete architectural coherence, reliable Groq/TrueForge inference, rigorous context bounds, and honest verification reporting. The system is certified ready for judging at Techfest IIT Bombay × TrueFoundry Forge-a-thon.
+

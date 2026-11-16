@@ -45,6 +45,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   try {
     await mcpServerInstance.start();
+    await trueforgeClient.ensureGeminiProviderConfigured(undefined, workspaceRoot);
     await trueforgeClient.registerSentinelMcpServer(mcpServerInstance.getSseUrl());
   } catch (err) {
     console.warn('FORGE//SENTINEL: MCP Server initialization notice:', err);
@@ -86,6 +87,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('forge-sentinel.openPanel', async () => {
       await vscode.commands.executeCommand('forge-sentinel.agentPanel.focus');
+    }),
+    vscode.commands.registerCommand('forge-sentinel.analyzeArchitecture', async () => {
+      await vscode.commands.executeCommand('forge-sentinel.agentPanel.focus');
+      await agentViewProvider.handleUserPrompt('Analyze this repository and explain its architecture.');
     })
   );
 

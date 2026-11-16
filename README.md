@@ -20,7 +20,7 @@
 [![Vitest](https://img.shields.io/badge/Tests-39%2F39%20Passing-00E5FF?style=flat-square&logo=vitest&logoColor=black)](tests/)
 [![Flask Benchmark](https://img.shields.io/badge/Flask%203.1.3%20Benchmark-Tasks%20A%2C%20B%2C%20C%20Verified-7B2CBF?style=flat-square&logo=flask&logoColor=white)](docs/MILESTONE_8_1_RELEASE_AUDIT.md)
 [![TrueForge Native](https://img.shields.io/badge/Harness-TrueForge%20Native-4361EE?style=flat-square)](https://truefoundry.com)
-[![Model Engine](https://img.shields.io/badge/Inference-Groq%20Qwen%203.8%2027B-F72585?style=flat-square)](https://groq.com)
+[![Model Engine](https://img.shields.io/badge/Inference-Google%20Gemini%203.8%20Flash-4285F4?style=flat-square&logo=google)](https://ai.google.dev)
 [![Security Audited](https://img.shields.io/badge/Security-Zero%20Credential%20Exposure-2EC4B6?style=flat-square)](docs/SECURITY.md)
 
 [Architecture](docs/ARCHITECTURE.md) • [Installation](docs/INSTALLATION.md) • [Demo Walkthrough](docs/DEMO_GUIDE.md) • [Security Model](docs/SECURITY.md) • [Audit Report](docs/MILESTONE_8_1_RELEASE_AUDIT.md)
@@ -363,7 +363,7 @@ curl http://localhost:8790/healthz
 ```
 
 ### 2. Configure Model inside TrueForge
-Set your Groq API key inside TrueForge UI (`http://localhost:8790`) under **Settings > Providers > Groq**, selecting canonical model `groq/qwen-3-8-27b`.
+Set your Google Gemini API key (`GEMINI_API_KEY`) in `FORGE-SENTINEL/.env` (gitignored) or configure it inside TrueForge (`http://localhost:8790`) under **Settings > Providers > Google Gemini**, selecting canonical model `google-gemini/gemini-3-8-flash` (`gemini-3.8-flash`).
 > *Note: FORGE//SENTINEL does not store, accept, or handle API keys.*
 
 ### 3. Build & Test Extension
@@ -505,7 +505,7 @@ FORGE-SENTINEL/
 | `TrueForge Daemon OFFLINE` | Daemon process not started or blocked. | Start TrueForge: `NETWORK_POLICY_ENABLED=false node trueforge/packages/trueforge/dist/cli.js --port 8790`. |
 | `Port 9099 already in use` | Orphaned MCP server process. | Kill process: `lsof -ti:9099 \| xargs kill -9` (or use port `9098`). |
 | `Turn not found (HTTP 404)` | Outdated event ID mapping. | Use latest release candidate (`22a8baf+`) which maps `turnId` correctly. |
-| `Model returned 404 on Groq` | Deprecated model identifier requested. | Ensure canonical model `groq/qwen-3-8-27b` is configured in TrueForge. |
+| `Model returned 404` | Deprecated or unconfigured model identifier requested. | Ensure canonical model `google-gemini/gemini-3-8-flash` (`gemini-3.8-flash`) is configured in TrueForge. |
 | `Flask virtualenv not found` | Python venv missing in `flask/`. | Create venv in `flask/`: `python3 -m venv .venv && source .venv/bin/activate && pip install -e .`. |
 
 ---

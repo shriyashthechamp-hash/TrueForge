@@ -132,3 +132,4 @@
 | **Diff Review Before Write** | All proposals staged via `PatchStagingManager`; zero silent disk writes. | **100%** |
 | **Undo / Rollback Stack** | Changes applied via `vscode.WorkspaceEdit` and `PatchStagingManager.revertPatch`. | **100%** |
 | **Repo Hygiene** | Upstream TrueForge source untouched; submission cleanly packaged in `FORGE-SENTINEL/`. | **100%** |
+

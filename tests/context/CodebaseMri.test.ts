@@ -70,3 +70,4 @@ def authenticate_user(username, token):
     expect(found[0].name).toBe('processRefund');
   });
 });
+

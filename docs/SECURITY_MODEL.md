@@ -46,3 +46,4 @@
 - Custom Webviews operate with `enableScripts: true` but enforce a strict Content Security Policy.
 - Only local extension resources with randomized, cryptographically strong `nonce` attributes may execute scripts.
 - No remote external scripts, inline event handlers, or external frames are permitted.
+

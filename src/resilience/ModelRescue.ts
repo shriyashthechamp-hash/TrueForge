@@ -69,3 +69,4 @@ export class ModelRescue {
     return err instanceof Error ? err : new Error(String(err));
   }
 }
+

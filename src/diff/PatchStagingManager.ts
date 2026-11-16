@@ -146,7 +146,7 @@ export class PatchStagingManager {
         patch.status = 'rejected';
         return { appliedContent: currentContent, relativePath: patch.filePath };
       }
-      finalContent = diff.applyPatch(patch.originalContent, {
+      const appliedResult = diff.applyPatch(patch.originalContent, {
         hunks: acceptedHunks.map((h) => ({
           oldStart: h.oldStart,
           oldLines: h.oldLines,
@@ -155,9 +155,10 @@ export class PatchStagingManager {
           lines: h.lines,
         })),
       } as any);
-      if (finalContent === false as unknown as string) {
+      if (appliedResult === false) {
         throw new Error(`Failed to apply selective hunks to "${patch.filePath}".`);
       }
+      finalContent = appliedResult;
     }
 
     await fs.mkdir(path.dirname(patch.absolutePath), { recursive: true });
@@ -183,3 +184,4 @@ export class PatchStagingManager {
     this.stagedPatches.clear();
   }
 }
+

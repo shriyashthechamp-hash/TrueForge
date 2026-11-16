@@ -22,3 +22,4 @@
 - **Context**: Raw semantic embedding of an entire repository can exceed token budgets and include noisy, irrelevant context.
 - **Decision**: Context Auction scores candidate snippets using a weighted blend of explicit mentions (`@file`, `@symbol`), symbol call-graph proximity, lexical match, and test affinity, generating a verifiable Context Selection Receipt.
 - **Consequences**: Precise, verifiable context fitting within strict token limits without relying on heavy external vector databases.
+

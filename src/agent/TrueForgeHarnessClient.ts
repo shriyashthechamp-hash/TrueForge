@@ -48,7 +48,7 @@ export class TrueForgeHarnessClient {
       });
       if (!resp.ok) return [];
       const json = (await resp.json()) as { data?: Array<{ name: string; model_id: string; provider: string }> };
-      return (json.data ?? []).map((m) => `${m.provider}/${m.model_id}`);
+      return (json.data ?? []).map((m) => m.name);
     } catch {
       return [];
     }
@@ -56,7 +56,7 @@ export class TrueForgeHarnessClient {
 
   public async registerSentinelMcpServer(sseUrl: string): Promise<void> {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/v1/settings/mcp-servers/forge-sentinel-mcp`, {
+      const resp = await fetch(`${this.baseUrl}/api/v1/settings/mcp-servers`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -81,13 +81,16 @@ export class TrueForgeHarnessClient {
     }
   }
 
-  public async createSession(options?: {
+  public async ensureNamedAgent(options?: {
     modelName?: string;
     instructions?: string;
     requireToolApproval?: boolean;
   }): Promise<string> {
     const configuredModels = await this.listConfiguredModels();
-    const selectedModel = options?.modelName || (configuredModels.length > 0 ? configuredModels[0] : 'openai/gpt-4o');
+    const preferredModel =
+      configuredModels.find((m) => m.includes('gpt-oss-120b') || m.includes('qwen') || m.includes('groq')) ||
+      (configuredModels.length > 0 ? configuredModels[0] : 'groq/gpt-oss-120b');
+    const selectedModel = options?.modelName || preferredModel;
 
     const instructions =
       options?.instructions ??
@@ -98,25 +101,82 @@ Never make assumptions about file locations. Use search_workspace, find_symbol, 
 When proposing changes, invoke propose_file_edit or propose_multi_file_edit. Explain the purpose, rationale, and impact for every changed file.
 Execute tests via run_test_command to verify your work.`;
 
-    const approvalRules = options?.requireToolApproval !== false
-      ? ['propose_file_edit', 'propose_multi_file_edit', 'run_terminal_command']
-      : [];
+    const approvalRules =
+      options?.requireToolApproval !== false
+        ? ['propose_file_edit', 'propose_multi_file_edit', 'run_terminal_command']
+        : [];
+
+    const agentName = 'forge-sentinel';
+    const agentPayload = {
+      name: agentName,
+      description: 'FORGE//SENTINEL — Repository Intelligence & Engineering Agent',
+      manifest: {
+        model: { name: selectedModel },
+        instructions,
+        mcp_servers: [
+          {
+            name: 'forge-sentinel-mcp',
+            preload: true,
+            enable_tools: ['@all'],
+            require_approval_for_tools: approvalRules,
+          },
+        ],
+      },
+    };
+
+    const postResp = await fetch(`${this.baseUrl}/api/v1/agents`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: JSON.stringify(agentPayload),
+    });
+
+    if (postResp.status === 409) {
+      const listResp = await fetch(`${this.baseUrl}/api/v1/agents`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (listResp.ok) {
+        const listJson = (await listResp.json()) as { data: Array<{ id: string; name: string }> };
+        const match = listJson.data.find((a) => a.name === agentName);
+        if (match) {
+          const putResp = await fetch(`${this.baseUrl}/api/v1/agents/${match.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.token}`,
+            },
+            body: JSON.stringify({
+              description: agentPayload.description,
+              manifest: agentPayload.manifest,
+            }),
+          });
+          if (!putResp.ok) {
+            const errBody = await putResp.text();
+            throw new Error(`Agent configuration rejected: ${errBody}`);
+          }
+        }
+      }
+    } else if (!postResp.ok) {
+      const errBody = await postResp.text();
+      throw new Error(`Agent creation rejected: ${errBody}`);
+    }
+
+    return agentName;
+  }
+
+  public async createSession(options?: {
+    modelName?: string;
+    instructions?: string;
+    requireToolApproval?: boolean;
+  }): Promise<string> {
+    const agentName = await this.ensureNamedAgent(options);
 
     try {
-      const session = await this.client.sessions.create({
+      const sessionResponse = await this.client.sessions.create({
         agent: {
-          spec: {
-            model: { name: selectedModel },
-            instructions,
-            mcpServers: [
-              {
-                name: 'forge-sentinel-mcp',
-                preload: true,
-                enableTools: ['@all'],
-                requireApprovalForTools: approvalRules,
-              },
-            ],
-          },
+          name: agentName,
         },
         metadata: {
           client: 'forge-sentinel-vscode',
@@ -124,10 +184,12 @@ Execute tests via run_test_command to verify your work.`;
         },
       });
 
-      return session.id;
+      return sessionResponse.data.id;
     } catch (err: any) {
       if (err instanceof TrueForgeError) {
-        throw new Error(`TrueForge Session Creation Failed [${err.statusCode}]: ${err.message}`, { cause: err });
+        throw new Error(`TrueForge Session Creation Failed [${err.statusCode}]: ${err.message}`, {
+          cause: err,
+        });
       }
       throw err;
     }
@@ -143,6 +205,7 @@ Execute tests via run_test_command to verify your work.`;
       const stream = await this.client.sessions.createTurnStream(
         sessionId,
         {
+          assumeUser: 'session-creator',
           input: [{ type: 'user.message', content: prompt }],
         },
         { abortSignal }
@@ -157,19 +220,56 @@ Execute tests via run_test_command to verify your work.`;
             break;
           }
 
-          case 'model.message_delta': {
-            if (event.delta && typeof event.delta === 'string') {
-              callbacks?.onTokenDelta?.(event.delta);
+          case 'model.message.delta': {
+            const rawCalls = (event as any).toolCalls ?? (event as any).tool_calls ?? [];
+            for (const call of rawCalls) {
+              const name = call.toolInfo?.name ?? call.function?.name ?? call.name ?? '';
+              let args = call.function?.arguments ?? call.arguments ?? call.args ?? {};
+              if (typeof args === 'string' && args.trim().length > 0) {
+                try {
+                  args = JSON.parse(args);
+                } catch {
+                  // partial json in streaming delta
+                }
+              }
+              if (name) {
+                callbacks?.onToolCall?.({
+                  id: call.id ?? '',
+                  name,
+                  args,
+                });
+              }
+            }
+
+            const delta = (event as any).content ?? (event as any).delta;
+            if (delta && typeof delta === 'string') {
+              callbacks?.onTokenDelta?.(delta);
             }
             break;
           }
 
-          case 'tool.call': {
-            callbacks?.onToolCall?.({
-              id: (event as any).id ?? '',
-              name: (event as any).name ?? '',
-              args: (event as any).arguments ?? {},
-            });
+          case 'model.message': {
+            const rawCalls = (event as any).tool_calls ?? (event as any).toolCalls ?? [];
+            for (const call of rawCalls) {
+              const name = call.function?.name ?? call.name ?? '';
+              let args = call.function?.arguments ?? call.arguments ?? call.args ?? {};
+              if (typeof args === 'string') {
+                try {
+                  args = JSON.parse(args);
+                } catch {
+                  // keep raw
+                }
+              }
+              callbacks?.onToolCall?.({
+                id: call.id ?? '',
+                name,
+                args,
+              });
+            }
+            const directContent = (event as any).content ?? (event as any).text;
+            if (directContent && typeof directContent === 'string' && rawCalls.length === 0) {
+              callbacks?.onTokenDelta?.(directContent);
+            }
             break;
           }
 
@@ -188,7 +288,7 @@ Execute tests via run_test_command to verify your work.`;
                       type: 'user.tool_approval',
                       threadId: (event as any).threadId,
                       toolCallId: call.id,
-                      approval: { decision: approved ? 'approved' : 'rejected' },
+                      approval: { status: approved ? 'allow' : 'deny' },
                     },
                   ],
                 });

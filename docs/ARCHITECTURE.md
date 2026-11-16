@@ -156,3 +156,4 @@ The local Sentinel MCP Server exposes the following standard tools to TrueForge:
 1. **Path Traversal Prevention**: Every requested path is resolved against `vscode.workspace.workspaceFolders[0].uri.fsPath`. Paths resolving outside the root throw `SecurityException`.
 2. **Safe Terminal Execution**: Commands are executed with cwd restricted to workspace root. Dangerous patterns (`rm -rf /`, formatting commands) are blocked.
 3. **Model Decoupling**: No LLM API keys are handled or stored in the extension. The extension communicates solely with the local TrueForge daemon.
+

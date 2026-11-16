@@ -105,3 +105,4 @@ Open `FORGE-SENTINEL` in VS Code and press `F5` to launch an Extension Developme
 - **TrueForge**: Copyright (c) TrueFoundry. Licensed under the MIT License.
 - **Flask**: Copyright (c) Pallets Projects. Licensed under the BSD-3-Clause License. Pinned to tag `3.1.3` (commit `22d92470`).
 - **FORGE//SENTINEL**: Licensed under the MIT License.
+

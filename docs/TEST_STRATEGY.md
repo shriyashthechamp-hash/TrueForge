@@ -44,3 +44,4 @@ To meet competition quality standards, FORGE//SENTINEL is verified across four d
 1. **No False Claims**: A test is never marked as passed without capturing the real exit code, stdout, and execution duration.
 2. **Deterministic Baselines**: The Flask test environment is strictly pinned to git commit `22d92470` (tag `3.1.3`).
 3. **Workspace Isolation**: Tests run against isolated fixtures or temporary clones; the parent repository status remains pristine (`git status` clean).
+

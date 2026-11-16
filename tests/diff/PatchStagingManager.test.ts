@@ -111,3 +111,4 @@ describe('PatchStagingManager (System 03 & 05)', () => {
     expect(manager.getPatch(staged.patchId)?.status).toBe('reverted');
   });
 });
+

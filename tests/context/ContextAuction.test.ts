@@ -59,3 +59,4 @@ describe('ContextAuction (System 02: Context Assembly & Selection)', () => {
     expect(receipt.totalTokensUsed).toBeLessThanOrEqual(2000);
   });
 });
+

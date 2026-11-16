@@ -270,3 +270,4 @@ export class TrueForgeHarnessClient {
 2. **Dedicated MCP Bridge**: FORGE//SENTINEL runs a local MCP server that exposes the workspace file inspection, indexing, patch staging, and terminal execution tools to TrueForge.
 3. **Safety-First Patches**: Changes proposed by the agent are staged in memory/disk as diff hunks. They are NEVER written silently. They require explicit developer hunk-by-hunk review via native VS Code diff views.
 4. **Resilient Session State**: If TrueForge disconnects or reports an error, the extension catches `TrueForgeError`, reports actionable diagnostics, and maintains workspace immutability.
+

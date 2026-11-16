@@ -98,3 +98,4 @@ export interface FlightRecorderEvent {
   summary: string;
   details?: Record<string, unknown>;
 }
+

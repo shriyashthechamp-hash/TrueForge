@@ -10,3 +10,4 @@ describe('TrueForgeHarnessClient (Harness Connection)', () => {
     expect(health.version).toBeDefined();
   });
 });
+

@@ -127,3 +127,4 @@ All native interactions adhere strictly to Microsoft's VS Code UX Guidelines and
    - Any path escaping the workspace (via `..` traversal or absolute path spoofing) is rejected with an explicit security violation.
 3. **Command Sanitization**:
    - Terminal commands executed via MCP are inspected. Potentially destructive commands (`rm -rf /`, `format`, pipe to shell) require explicit confirmation.
+

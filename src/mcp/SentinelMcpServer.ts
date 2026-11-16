@@ -18,9 +18,8 @@ import { SecurityBoundaryError } from '../shared/errors.js';
 const execAsync = promisify(exec);
 
 export class SentinelMcpServer {
-  private server: Server;
   private httpServer: http.Server | null = null;
-  private activeTransports = new Map<string, SSEServerTransport>();
+  private activeTransports = new Map<string, { transport: SSEServerTransport; server: Server }>();
   private port = 9099;
 
   constructor(
@@ -31,19 +30,6 @@ export class SentinelMcpServer {
     port = 9099
   ) {
     this.port = port;
-    this.server = new Server(
-      {
-        name: 'forge-sentinel-mcp',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
-
-    this.registerHandlers();
   }
 
   public getPort(): number {
@@ -58,7 +44,19 @@ export class SentinelMcpServer {
     return this.patchManager.assertInsideWorkspace(targetPath);
   }
 
-  private registerHandlers(): void {
+  private createServer(): Server {
+    const server = new Server(
+      {
+        name: 'forge-sentinel-mcp',
+        version: '1.0.0',
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
+      }
+    );
+
     const tools: Tool[] = [
       {
         name: 'read_file',
@@ -179,6 +177,28 @@ export class SentinelMcpServer {
         },
       },
       {
+        name: 'apply_staged_patch',
+        description: 'Apply a staged patch to the workspace file on disk after approval.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            patch_id: { type: 'string', description: 'ID of the staged patch to apply.' },
+          },
+          required: ['patch_id'],
+        },
+      },
+      {
+        name: 'revert_staged_patch',
+        description: 'Revert an applied patch and restore the file to its exact original state.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            patch_id: { type: 'string', description: 'ID of the patch to revert.' },
+          },
+          required: ['patch_id'],
+        },
+      },
+      {
         name: 'run_terminal_command',
         description: 'Execute a shell command inside the workspace root and capture output.',
         inputSchema: {
@@ -203,11 +223,11 @@ export class SentinelMcpServer {
       },
     ];
 
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
       return { tools };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args = {} } = request.params;
 
       try {
@@ -441,6 +461,32 @@ export class SentinelMcpServer {
             };
           }
 
+          case 'apply_staged_patch': {
+            const patchId = String(args.patch_id);
+            const res = await this.patchManager.applyPatch(patchId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `PATCH APPLIED SUCCESSFULLY:\n- Patch ID: ${patchId}\n- File: ${res.relativePath}\nWorkspace has been updated. Can be reverted anytime with revert_staged_patch.`,
+                },
+              ],
+            };
+          }
+
+          case 'revert_staged_patch': {
+            const patchId = String(args.patch_id);
+            await this.patchManager.revertPatch(patchId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `PATCH REVERTED SUCCESSFULLY:\n- Patch ID: ${patchId}\nFile restored to original state.`,
+                },
+              ],
+            };
+          }
+
           case 'run_terminal_command':
           case 'run_test_command': {
             const cmd = String(args.command);
@@ -455,9 +501,12 @@ export class SentinelMcpServer {
             }
 
             const startTime = Date.now();
+            const venvBin = path.join(this.workspaceRoot, '.venv', 'bin');
+            const customPath = `${venvBin}:${process.env.PATH ?? ''}`;
             try {
               const { stdout, stderr } = await execAsync(cmd, {
                 cwd: this.workspaceRoot,
+                env: { ...process.env, PATH: customPath },
                 timeout,
                 maxBuffer: 5 * 1024 * 1024,
               });
@@ -497,6 +546,8 @@ export class SentinelMcpServer {
         };
       }
     });
+
+    return server;
   }
 
   private async listDirRecursive(dirPath: string, maxDepth: number, currentDepth = 0): Promise<string[]> {
@@ -546,28 +597,29 @@ export class SentinelMcpServer {
       const parsedUrl = new URL(req.url ?? '/', `http://localhost:${this.port}`);
 
       if (parsedUrl.pathname === '/sse' && req.method === 'GET') {
+        const server = this.createServer();
         const transport = new SSEServerTransport('/messages', res);
-        this.activeTransports.set(transport.sessionId, transport);
+        this.activeTransports.set(transport.sessionId, { transport, server });
 
         transport.onclose = () => {
           this.activeTransports.delete(transport.sessionId);
         };
 
-        await this.server.connect(transport);
+        await server.connect(transport);
         return;
       }
 
       if (parsedUrl.pathname === '/messages' && req.method === 'POST') {
         const sessionId = parsedUrl.searchParams.get('sessionId');
-        const transport = sessionId ? this.activeTransports.get(sessionId) : Array.from(this.activeTransports.values())[0];
+        const session = sessionId ? this.activeTransports.get(sessionId) : Array.from(this.activeTransports.values())[0];
 
-        if (!transport) {
+        if (!session) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Session not found for SSE transport' }));
           return;
         }
 
-        await transport.handlePostMessage(req, res);
+        await session.transport.handlePostMessage(req, res);
         return;
       }
 
@@ -591,10 +643,32 @@ export class SentinelMcpServer {
 
   public async stop(): Promise<void> {
     if (this.httpServer) {
+      for (const { transport, server } of this.activeTransports.values()) {
+        try {
+          await transport.close();
+        } catch {
+          // ignore
+        }
+        try {
+          await server.close();
+        } catch {
+          // ignore
+        }
+      }
+      this.activeTransports.clear();
+
       await new Promise<void>((resolve) => {
-        this.httpServer?.close(() => resolve());
+        if (this.httpServer) {
+          if (typeof (this.httpServer as any).closeAllConnections === 'function') {
+            (this.httpServer as any).closeAllConnections();
+          }
+          this.httpServer.close(() => resolve());
+        } else {
+          resolve();
+        }
       });
       this.httpServer = null;
     }
   }
 }
+

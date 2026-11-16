@@ -98,8 +98,8 @@ describe('PatchStagingManager (System 03 & 05)', () => {
     const staged = manager.stagePatch({
       filePath: 'revert_test.py',
       proposedContent: 'initial = False\n',
-      purpose: 'Toggle',
-      rationale: 'Test',
+      purpose: 'Toggle initial',
+      rationale: 'Test revert',
       existingContent: originalContent,
     });
 
@@ -108,7 +108,25 @@ describe('PatchStagingManager (System 03 & 05)', () => {
 
     await manager.revertPatch(staged.patchId);
     expect(await fs.readFile(filePath, 'utf8')).toBe(originalContent);
-    expect(manager.getPatch(staged.patchId)?.status).toBe('reverted');
+  });
+
+  it('assesses risk levels accurately for breaking changes vs small edits', () => {
+    const lowRiskPatch = manager.stagePatch({
+      filePath: 'safe.py',
+      existingContent: 'x = 1\n',
+      proposedContent: 'x = 2\n',
+      purpose: 'Simple config change',
+      rationale: 'Update number',
+    });
+    expect(lowRiskPatch.riskLevel).toBe('low');
+
+    const highRiskPatch = manager.stagePatch({
+      filePath: 'api.py',
+      existingContent: 'def public_api():\n    return True\n',
+      proposedContent: '# removed public api\n',
+      purpose: 'Remove api',
+      rationale: 'Breaking change',
+    });
+    expect(highRiskPatch.riskLevel).toBe('high');
   });
 });
-

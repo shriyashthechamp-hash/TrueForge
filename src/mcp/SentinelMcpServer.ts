@@ -500,6 +500,20 @@ export class SentinelMcpServer {
               };
             }
 
+            // Block direct file writes via terminal redirection to ensure agent changes go through patch staging
+            const isWriteBypass = /(?:>|>>|\btee\b|\bsed\s+-i)/i.test(cmd) && !cmd.includes('pytest') && !cmd.includes('git');
+            if (isWriteBypass && name === 'run_terminal_command') {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Command blocked by Sentinel Safety Policy: Direct file writing via shell redirection or sed is forbidden. All code modifications must be staged through "propose_file_edit" or "propose_multi_file_edit" so the developer can review hunks and approve diffs.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+
             const startTime = Date.now();
             const venvBin = path.join(this.workspaceRoot, '.venv', 'bin');
             const customPath = `${venvBin}:${process.env.PATH ?? ''}`;

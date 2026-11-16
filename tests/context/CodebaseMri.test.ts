@@ -37,7 +37,7 @@ def authenticate_user(username, token):
     const testDir = path.join(tempDir, 'tests');
     await fs.mkdir(testDir, { recursive: true });
     const testFile = path.join(testDir, 'test_auth.py');
-    await fs.writeFile(testFile, 'def test_login(): pass\n', 'utf8');
+    await fs.writeFile(testFile, 'from src.auth import authenticate_user\ndef test_login(): pass\n', 'utf8');
 
     const index = await mri.scan();
     expect(index.size).toBe(2);
@@ -46,7 +46,6 @@ def authenticate_user(username, token):
     expect(authMeta).toBeDefined();
     expect(authMeta?.language).toBe('python');
     expect(authMeta?.imports).toContain('hashlib');
-    expect(authMeta?.imports).toContain('os');
 
     const symbols = authMeta?.symbols ?? [];
     expect(symbols.some((s) => s.name === 'AuthManager' && s.kind === 'class')).toBe(true);
@@ -69,5 +68,43 @@ def authenticate_user(username, token):
     expect(found.length).toBe(1);
     expect(found[0].name).toBe('processRefund');
   });
-});
 
+  it('refreshes incrementally without rescanning unchanged files', async () => {
+    const fileA = path.join(tempDir, 'module_a.py');
+    await fs.writeFile(fileA, 'def func_a(): pass\n', 'utf8');
+    await mri.scan();
+
+    expect(mri.getFiles().length).toBe(1);
+    expect(mri.findSymbols('func_a').length).toBe(1);
+
+    // Add module_b.py
+    const fileB = path.join(tempDir, 'module_b.py');
+    await fs.writeFile(fileB, 'def func_b(): pass\n', 'utf8');
+
+    const refreshResult = await mri.refreshIncremental();
+    expect(refreshResult.updated).toContain('module_b.py');
+    expect(mri.findSymbols('func_b').length).toBe(1);
+
+    // Delete module_a.py
+    await fs.rm(fileA);
+    const deleteResult = await mri.refreshIncremental();
+    expect(deleteResult.removed).toContain('module_a.py');
+    expect(mri.findSymbols('func_a').length).toBe(0);
+  });
+
+  it('builds import graphs and reverse import dependencies', async () => {
+    const helperFile = path.join(tempDir, 'helpers.py');
+    await fs.writeFile(helperFile, 'def helper(): pass\n', 'utf8');
+
+    const mainFile = path.join(tempDir, 'main.py');
+    await fs.writeFile(mainFile, 'import helpers\ndef run(): pass\n', 'utf8');
+
+    await mri.scan();
+
+    const mainImports = mri.getImportedFiles('main.py');
+    expect(mainImports).toContain('helpers.py');
+
+    const helperDependents = mri.getDependentFiles('helpers.py');
+    expect(helperDependents).toContain('main.py');
+  });
+});

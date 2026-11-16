@@ -77,16 +77,64 @@ export interface StagedFilePatch {
   createdAt: string;
 }
 
+export type TestExecutionStatus = "passed" | "failed" | "skipped" | "not_run" | "not_verified";
+
+export interface TestCaseResult {
+  testName: string;
+  status: TestExecutionStatus;
+  durationMs?: number;
+  output?: string;
+}
+
+export interface ImportRelationship {
+  importerPath: string;
+  importedModule: string;
+  resolvedPath?: string;
+}
+
+export interface CodebaseMriSummary {
+  totalFiles: number;
+  totalSymbols: number;
+  languages: Record<string, number>;
+  lastScannedMs: number;
+  isStale: boolean;
+  staleFilesCount: number;
+}
+
+export type AgentExecutionStep =
+  | "idle"
+  | "understanding"
+  | "searching"
+  | "retrieving"
+  | "planning"
+  | "inspecting"
+  | "staging"
+  | "reviewing"
+  | "testing"
+  | "proven"
+  | "error"
+  | "cancelled";
+
 export interface ProofOfChangeReport {
   taskId: string;
   userInstruction: string;
+  implementationPlan: string[];
+  contextSelected: { filePath: string; tokens: number; score: number }[];
+  filesInspected: string[];
   filesModified: string[];
   patchesProposed: number;
   patchesAccepted: number;
+  approvedHunksCount: number;
+  rejectedHunksCount: number;
+  commandsExecuted: string[];
   testsDiscovered: string[];
   testsExecuted: string[];
+  testResults: TestCaseResult[];
   testsPassed: boolean;
   testOutputSummary: string;
+  skippedOrFailedChecks: string[];
+  remainingRisks: string[];
+  unverifiedBehavior: string[];
   status: "success" | "partial" | "failed" | "unverified";
   generatedAt: string;
 }

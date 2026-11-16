@@ -29,13 +29,42 @@ export class PatchStagingManager {
     return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
   }
 
+  /**
+   * Assesses risk level of a proposed patch based on diff metrics
+   */
+  private assessRisk(original: string, proposed: string, hunks: DiffHunk[]): 'low' | 'medium' | 'high' {
+    let linesAdded = 0;
+    let linesRemoved = 0;
+    let deletesDeclaration = false;
+
+    for (const hunk of hunks) {
+      for (const line of hunk.lines) {
+        if (line.startsWith('+') && !line.startsWith('+++')) linesAdded++;
+        if (line.startsWith('-') && !line.startsWith('---')) {
+          linesRemoved++;
+          if (/^\s*(def |class |export |function |interface )/.test(line.slice(1))) {
+            deletesDeclaration = true;
+          }
+        }
+      }
+    }
+
+    if (deletesDeclaration || linesRemoved > 80 || linesAdded > 200) {
+      return 'high';
+    }
+    if (linesRemoved > 20 || linesAdded > 50 || hunks.length > 3) {
+      return 'medium';
+    }
+    return 'low';
+  }
+
   public stagePatch(options: {
     filePath: string;
     proposedContent: string;
     purpose: string;
     rationale: string;
     expectedImpact?: string;
-    riskLevel?: "low" | "medium" | "high";
+    riskLevel?: 'low' | 'medium' | 'high';
     existingContent?: string;
   }): StagedFilePatch {
     const absolutePath = this.assertInsideWorkspace(options.filePath);
@@ -69,6 +98,8 @@ export class PatchStagingManager {
       accepted: true,
     }));
 
+    const computedRisk = options.riskLevel ?? this.assessRisk(originalContent, options.proposedContent, hunks);
+
     const staged: StagedFilePatch = {
       patchId,
       filePath: relativePath,
@@ -82,7 +113,7 @@ export class PatchStagingManager {
       purpose: options.purpose,
       rationale: options.rationale,
       expectedImpact: options.expectedImpact ?? 'Precise targeted change satisfying requirement.',
-      riskLevel: options.riskLevel ?? 'low',
+      riskLevel: computedRisk,
       status: 'staged',
       createdAt: new Date().toISOString(),
     };
@@ -97,6 +128,15 @@ export class PatchStagingManager {
 
   public getAllStaged(): StagedFilePatch[] {
     return Array.from(this.stagedPatches.values());
+  }
+
+  public getPendingPatches(): StagedFilePatch[] {
+    return Array.from(this.stagedPatches.values()).filter((p) => p.status === 'staged');
+  }
+
+  public getPatchesForFile(filePath: string): StagedFilePatch[] {
+    const rel = path.relative(this.workspaceRoot, this.assertInsideWorkspace(filePath));
+    return Array.from(this.stagedPatches.values()).filter((p) => p.filePath === rel);
   }
 
   public setHunkDecision(patchId: string, hunkId: string, accepted: boolean): boolean {
@@ -184,4 +224,3 @@ export class PatchStagingManager {
     this.stagedPatches.clear();
   }
 }
-

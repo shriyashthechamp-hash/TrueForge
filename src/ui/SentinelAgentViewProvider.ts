@@ -1,10 +1,12 @@
 import * as crypto from 'node:crypto';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { TrueForgeHarnessClient } from '../agent/TrueForgeHarnessClient.js';
 import type { CodebaseMri } from '../context/CodebaseMri.js';
 import type { ContextAuction } from '../context/ContextAuction.js';
 import type { PatchStagingManager } from '../diff/PatchStagingManager.js';
 import type { FlightRecorder } from '../flight-recorder/FlightRecorder.js';
+import type { AgentExecutionStep, ProofOfChangeReport } from '../shared/types.js';
 
 export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'forge-sentinel.agentPanel';
@@ -58,8 +60,21 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
           await this.handlePatchDecision(message.patchId, 'reject');
           break;
         }
+        case 'revertPatch': {
+          await this.handleRevertPatch(message.patchId);
+          break;
+        }
+        case 'toggleHunk': {
+          this.patchManager.setHunkDecision(message.patchId, message.hunkId, message.accepted);
+          this.refreshStagedPatchesUI();
+          break;
+        }
         case 'reviewPatchDiff': {
           await this.handleReviewDiff(message.patchId);
+          break;
+        }
+        case 'refreshStatus': {
+          await this.updateConnectionStatus();
           break;
         }
       }
@@ -72,10 +87,12 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     try {
       const health = await this.trueforge.checkHealth();
       const models = await this.trueforge.listConfiguredModels();
+      const preferredModel = models.find((m) => m.includes('qwen') || m.includes('groq')) ?? (models[0] || 'groq/qwen-3-8-27b');
       this._view?.webview.postMessage({
         type: 'statusUpdate',
         connected: true,
         version: health.version ?? '0.0.0',
+        activeModel: preferredModel,
         models,
       });
     } catch {
@@ -88,8 +105,9 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleScanWorkspace(): Promise<void> {
-    this._view?.webview.postMessage({ type: 'log', message: 'Running Codebase MRI scan...' });
-    const files = await this.mri.scan();
+    this.postExecutionStep('searching');
+    this._view?.webview.postMessage({ type: 'log', message: 'Running Codebase MRI structural scan...' });
+    await this.mri.scan();
     const summary = this.mri.getStructureSummary();
     this._view?.webview.postMessage({
       type: 'mriSummary',
@@ -98,6 +116,14 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     this._view?.webview.postMessage({
       type: 'log',
       message: `Codebase MRI scan complete: ${summary.totalFiles} files, ${summary.totalSymbols} symbols indexed.`,
+    });
+    this.postExecutionStep('idle');
+  }
+
+  private postExecutionStep(step: AgentExecutionStep): void {
+    this._view?.webview.postMessage({
+      type: 'executionStep',
+      step,
     });
   }
 
@@ -110,24 +136,36 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
 
     this._view?.webview.postMessage({ type: 'userMessage', text: promptText });
     this._view?.webview.postMessage({ type: 'turnStarted' });
+    this.postExecutionStep('understanding');
 
     try {
-      this._view?.webview.postMessage({ type: 'log', message: 'Running Context Auction retrieval...' });
+      this.postExecutionStep('retrieving');
+      this._view?.webview.postMessage({ type: 'log', message: 'Context Auction: Evaluating repository relevance and token budget...' });
       const { receipt, contextBundle } = await this.auction.runAuction(promptText, 16000);
+
+      this.flightRecorder.setContextSelectionMetadata(
+        receipt.selectedFiles.map((f) => ({
+          filePath: f.filePath,
+          tokens: f.estimatedTokens,
+          score: f.score,
+        }))
+      );
 
       this._view?.webview.postMessage({
         type: 'contextReceipt',
         receipt,
       });
 
-      this._view?.webview.postMessage({ type: 'log', message: 'Creating TrueForge session...' });
+      this.postExecutionStep('planning');
+      this._view?.webview.postMessage({ type: 'log', message: 'Initializing TrueForge autonomous turn...' });
+
       this.activeSessionId = await this.trueforge.createSession({
         instructions: `You are FORGE//SENTINEL, an expert autonomous coding agent.
-You have access to tools via MCP (forge-sentinel-mcp).
-To inspect code: search_workspace, find_symbol, read_file.
+Core philosophy: "Understand First. Plan Intelligently. Change Precisely. Prove Everything."
+To inspect code: search_workspace, find_symbol, read_file, inspect_file_structure.
 To stage changes: propose_file_edit, propose_multi_file_edit.
 To run tests: run_test_command.
-Always explain the purpose, rationale, and expected impact of any changes.`,
+Always explain the purpose, rationale, and expected impact of any changes before staging.`,
       });
 
       const fullPrompt = `${promptText}\n\n=== RELEVANT CONTEXT (RETRIEVED VIA CONTEXT AUCTION) ===\n${contextBundle}`;
@@ -140,6 +178,15 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
             this._view?.webview.postMessage({ type: 'tokenDelta', delta });
           },
           onToolCall: (call) => {
+            if (call.name.includes('search') || call.name.includes('find')) {
+              this.postExecutionStep('searching');
+            } else if (call.name.includes('read') || call.name.includes('inspect')) {
+              this.postExecutionStep('inspecting');
+            } else if (call.name.includes('propose')) {
+              this.postExecutionStep('staging');
+            } else if (call.name.includes('test')) {
+              this.postExecutionStep('testing');
+            }
             this._view?.webview.postMessage({ type: 'toolCall', call });
             this.flightRecorder.record('tool_call', `Agent invoked tool: ${call.name}`, { ...call });
           },
@@ -149,6 +196,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
             this.refreshStagedPatchesUI();
           },
           onTurnComplete: (result) => {
+            this.postExecutionStep('proven');
             this._view?.webview.postMessage({ type: 'turnDone', result });
             this.compileAndSendProofOfChange(promptText, taskId);
           },
@@ -157,8 +205,10 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
       );
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user.' });
+        this.postExecutionStep('cancelled');
+        this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user. Workspace state fully preserved.' });
       } else {
+        this.postExecutionStep('error');
         this._view?.webview.postMessage({ type: 'error', message: err.message });
       }
     } finally {
@@ -174,6 +224,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     if (this.activeSessionId) {
       this.trueforge.cancel(this.activeSessionId);
     }
+    this.postExecutionStep('cancelled');
     this._view?.webview.postMessage({ type: 'log', message: 'Cancellation signal sent.' });
   }
 
@@ -187,6 +238,8 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
         status: p.status,
         purpose: p.purpose,
         rationale: p.rationale,
+        expectedImpact: p.expectedImpact,
+        riskLevel: p.riskLevel,
         hunks: p.hunks,
       })),
     });
@@ -208,7 +261,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
       'vscode.diff',
       fileUri,
       tempProposedUri,
-      `Sentinel Review: ${patch.filePath} (Proposed Diff)`
+      `Sentinel Review: ${path.basename(patch.filePath)} (Proposed Diff)`
     );
   }
 
@@ -219,7 +272,8 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     if (decision === 'accept') {
       try {
         await this.patchManager.applyPatch(patchId);
-        vscode.window.showInformationMessage(`FORGE//SENTINEL: Applied patch for "${patch.filePath}".`);
+        vscode.window.showInformationMessage(`FORGE//SENTINEL: Applied surgical patch to "${patch.filePath}".`);
+        this.flightRecorder.record('patch_applied', `Applied patch ${patchId}`, { filePath: patch.filePath });
       } catch (err: any) {
         vscode.window.showErrorMessage(`Apply failed: ${err.message}`);
       }
@@ -229,20 +283,42 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     }
 
     this.refreshStagedPatchesUI();
+    this.compileAndSendProofOfChange('', patchId);
+  }
+
+  private async handleRevertPatch(patchId: string): Promise<void> {
+    try {
+      await this.patchManager.revertPatch(patchId);
+      vscode.window.showInformationMessage(`FORGE//SENTINEL: Reverted patch ${patchId}.`);
+      this.refreshStagedPatchesUI();
+      this.compileAndSendProofOfChange('', patchId);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Revert failed: ${err.message}`);
+    }
   }
 
   private compileAndSendProofOfChange(instruction: string, taskId: string): void {
     const staged = this.patchManager.getAllStaged();
-    const accepted = staged.filter((p) => p.status === 'applied');
-    const report = this.flightRecorder.compileProofOfChange({
-      filesModified: accepted.map((p) => p.filePath),
+    const applied = staged.filter((p) => p.status === 'applied');
+    const approvedHunks = staged.reduce((acc, p) => acc + p.hunks.filter((h) => h.accepted).length, 0);
+    const rejectedHunks = staged.reduce((acc, p) => acc + p.hunks.filter((h) => !h.accepted).length, 0);
+
+    const report: ProofOfChangeReport = this.flightRecorder.compileProofOfChange({
+      filesModified: applied.map((p) => p.filePath),
       patchesProposed: staged.length,
-      patchesAccepted: accepted.length,
+      patchesAccepted: applied.length,
+      approvedHunksCount: approvedHunks,
+      rejectedHunksCount: rejectedHunks,
     });
 
     this._view?.webview.postMessage({
       type: 'proofOfChange',
       report,
+    });
+
+    this._view?.webview.postMessage({
+      type: 'timelineEvents',
+      events: this.flightRecorder.getEvents(),
     });
   }
 
@@ -257,7 +333,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     default-src 'none';
     style-src ${webview.cspSource} 'unsafe-inline';
     script-src 'nonce-${nonce}';
-    img-src ${webview.cspSource} https:;
+    img-src ${webview.cspSource} https: data:;
     font-src ${webview.cspSource};
   ">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -266,170 +342,309 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     :root {
       --bg: #0d1117;
       --card-bg: #161b22;
-      --border: #30363d;
+      --card-border: #30363d;
       --text: #c9d1d9;
       --text-muted: #8b949e;
-      --cobalt: #3b82f6;
-      --cobalt-hover: #2563eb;
-      --lime: #10b981;
-      --amber: #f59e0b;
-      --crimson: #ef4444;
-      --violet: #8b5cf6;
+      --text-bright: #f0f6fc;
+      --cobalt: #38bdf8;
+      --cobalt-dark: #0284c7;
+      --lime: #34d399;
+      --amber: #fbbf24;
+      --crimson: #f87171;
+      --violet: #a78bfa;
+      --subtle-bg: #21262d;
     }
     body {
       background-color: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       margin: 0;
-      padding: 12px;
-      font-size: 13px;
-      line-height: 1.5;
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.45;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 10px;
     }
     .brand {
       font-weight: 700;
-      letter-spacing: 0.05em;
-      color: #ffffff;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--text-bright);
       display: flex;
       align-items: center;
       gap: 6px;
     }
-    .status-badge {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 12px;
-      background: #1f2937;
-      border: 1px solid var(--border);
+    .status-pills {
+      display: flex;
+      gap: 6px;
+      align-items: center;
     }
-    .status-badge.online {
+    .pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      border: 1px solid var(--card-border);
+      background: var(--card-bg);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pill.online {
       color: var(--lime);
-      border-color: rgba(16, 185, 129, 0.3);
+      border-color: rgba(52, 211, 153, 0.4);
     }
-    .status-badge.offline {
+    .pill.offline {
       color: var(--crimson);
-      border-color: rgba(239, 68, 68, 0.3);
+      border-color: rgba(248, 113, 113, 0.4);
     }
+    .pill.model {
+      color: var(--cobalt);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    /* Execution Step Pipeline */
+    .step-pipeline {
+      display: flex;
+      gap: 4px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      padding: 6px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      overflow-x: auto;
+    }
+    .step-node {
+      font-size: 10px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      background: var(--subtle-bg);
+      color: var(--text-muted);
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+    .step-node.active {
+      background: var(--cobalt-dark);
+      color: #ffffff;
+      font-weight: 600;
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
+    }
+    .step-node.completed {
+      background: rgba(52, 211, 153, 0.2);
+      color: var(--lime);
+    }
+
+    /* Chat / Message Stream */
     .chat-container {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      max-height: 380px;
+      gap: 8px;
+      max-height: 280px;
       overflow-y: auto;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
+      padding-right: 4px;
     }
     .message {
-      padding: 8px 12px;
+      padding: 8px 10px;
       border-radius: 6px;
       font-size: 12px;
+      border: 1px solid var(--card-border);
     }
     .message.user {
-      background: #1e293b;
-      border-left: 3px solid var(--cobalt);
+      background: #172554;
+      border-color: #1e3a8a;
+      color: #e0f2fe;
     }
     .message.assistant {
       background: var(--card-bg);
-      border-left: 3px solid var(--violet);
+      border-color: var(--card-border);
     }
     .tool-box {
-      background: #0f172a;
-      border: 1px solid #334155;
-      padding: 6px 10px;
+      background: #020617;
+      border: 1px solid #1e293b;
+      padding: 6px 8px;
       border-radius: 4px;
-      font-family: monospace;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 11px;
-      color: #93c5fd;
-      margin: 4px 0;
+      color: #7dd3fc;
     }
     .receipt-box {
-      background: #111827;
-      border: 1px solid #374151;
-      padding: 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      margin: 8px 0;
-    }
-    .receipt-header {
-      font-weight: bold;
-      color: var(--amber);
-      margin-bottom: 4px;
-    }
-    .staged-patch {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
+      background: #1e1b4b;
+      border: 1px solid #312e81;
+      padding: 8px 10px;
       border-radius: 6px;
-      padding: 10px;
-      margin-bottom: 8px;
+      font-size: 11px;
     }
-    .patch-title {
+    .receipt-title {
       font-weight: 600;
-      color: #ffffff;
+      color: var(--amber);
       display: flex;
       justify-content: space-between;
       margin-bottom: 4px;
     }
+    .token-meter {
+      height: 4px;
+      background: #374151;
+      border-radius: 2px;
+      margin: 4px 0 6px 0;
+      overflow: hidden;
+    }
+    .token-meter-fill {
+      height: 100%;
+      background: var(--amber);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Staged Patches */
+    .staged-patch {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+    .patch-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .file-chip {
+      font-weight: 600;
+      color: var(--text-bright);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+    }
+    .badge {
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .badge.staged { background: #854d0e; color: #fef08a; }
+    .badge.applied { background: #065f46; color: #a7f3d0; }
+    .badge.rejected { background: #991b1b; color: #fecaca; }
+    .badge.risk-low { background: #14532d; color: #86efac; }
+    .badge.risk-medium { background: #713f12; color: #fde047; }
+    .badge.risk-high { background: #7f1d1d; color: #fca5a5; }
+
     .patch-purpose {
       font-size: 11px;
       color: var(--text-muted);
       margin-bottom: 8px;
     }
+    .hunk-list {
+      margin: 6px 0 8px 0;
+      padding: 4px;
+      background: #090d13;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 10px;
+    }
+    .hunk-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 2px 4px;
+    }
+
+    /* Proof of Change Report */
+    .proof-card {
+      background: #022c22;
+      border: 1px solid #059669;
+      padding: 10px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 11px;
+    }
+    .proof-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 700;
+      color: #6ee7b7;
+      margin-bottom: 6px;
+    }
+    .test-result-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Quick Prompts / Empty State */
+    .quick-prompts {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .quick-chip {
+      background: var(--subtle-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 4px;
+      padding: 6px 8px;
+      color: var(--cobalt);
+      font-size: 11px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .quick-chip:hover {
+      background: #28303a;
+      border-color: var(--cobalt);
+    }
+
+    /* Buttons */
     .btn-group {
       display: flex;
       gap: 6px;
     }
     button {
-      background: var(--cobalt);
+      background: var(--cobalt-dark);
       color: #ffffff;
       border: none;
-      padding: 6px 12px;
+      padding: 5px 10px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
+      font-size: 11px;
+      font-weight: 600;
+      transition: background 0.15s ease;
     }
-    button:hover {
-      background: var(--cobalt-hover);
-    }
-    button.secondary {
-      background: #374151;
-    }
-    button.secondary:hover {
-      background: #4b5563;
-    }
-    button.danger {
-      background: #991b1b;
-    }
-    button.danger:hover {
-      background: #b91c1c;
-    }
-    button.success {
-      background: #065f46;
-    }
-    button.success:hover {
-      background: #047857;
-    }
+    button:hover { background: #0369a1; }
+    button.secondary { background: #374151; }
+    button.secondary:hover { background: #4b5563; }
+    button.danger { background: #991b1b; }
+    button.danger:hover { background: #b91c1c; }
+    button.success { background: #065f46; }
+    button.success:hover { background: #047857; }
+    button.tiny { padding: 2px 6px; font-size: 9px; }
+
+    /* Input */
     .input-area {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
+      margin-top: 8px;
     }
     textarea {
       width: 100%;
       box-sizing: border-box;
       background: var(--card-bg);
-      color: var(--text);
-      border: 1px solid var(--border);
+      color: var(--text-bright);
+      border: 1px solid var(--card-border);
       border-radius: 6px;
       padding: 8px;
       font-size: 12px;
       resize: vertical;
-      min-height: 60px;
+      min-height: 55px;
+      font-family: inherit;
     }
     textarea:focus {
       outline: none;
@@ -447,12 +662,35 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     <div class="brand">
       <span>🛡️</span> FORGE//SENTINEL
     </div>
-    <div id="statusBadge" class="status-badge offline">Checking...</div>
+    <div class="status-pills">
+      <div id="statusBadge" class="pill offline">Daemon: Offline</div>
+      <div id="modelPill" class="pill model">Model: Ready</div>
+    </div>
+  </div>
+
+  <!-- Live Execution Step Pipeline -->
+  <div class="step-pipeline" id="stepPipeline">
+    <div class="step-node active" id="step-idle">1. Idle</div>
+    <div class="step-node" id="step-understanding">2. Understand</div>
+    <div class="step-node" id="step-retrieving">3. Auction</div>
+    <div class="step-node" id="step-searching">4. MRI</div>
+    <div class="step-node" id="step-planning">5. Plan</div>
+    <div class="step-node" id="step-staging">6. Stage</div>
+    <div class="step-node" id="step-testing">7. Test</div>
+    <div class="step-node" id="step-proven">8. Proven</div>
   </div>
 
   <div id="chat" class="chat-container">
     <div class="message assistant">
-      <strong>Sentinel Agent:</strong> Command Center active. TrueForge agent loop, MCP tools, and Context Auction standing by.
+      <strong>Sentinel Command Center:</strong> Ready. Codebase MRI, Context Auction, Surgical Patch Staging, and Proof-Carrying Code active.
+      <div class="quick-prompts">
+        <div class="quick-chip" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
+          ⚡ <strong>Task B:</strong> Add built-in "flask config" command with recursive masking
+        </div>
+        <div class="quick-chip" data-prompt="In src/flask/helpers.py, treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value treated as false.">
+          ⚡ <strong>Task A:</strong> Inline edit on get_debug_flag ('off' and 'n')
+        </div>
+      </div>
     </div>
   </div>
 
@@ -460,11 +698,11 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
   <div id="proofContainer"></div>
 
   <div class="input-area">
-    <textarea id="promptInput" placeholder="Enter instructions (e.g. 'Add a new built-in CLI command flask config...'). Use @file and @symbol for explicit focus."></textarea>
+    <textarea id="promptInput" placeholder="Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision."></textarea>
     <div class="actions">
       <div class="btn-group">
-        <button id="scanBtn" class="secondary" title="Run structural Codebase MRI">Scan MRI</button>
-        <button id="cancelBtn" class="danger" style="display: none;">Cancel</button>
+        <button id="scanBtn" class="secondary" title="Run Codebase MRI structural scan">Scan MRI</button>
+        <button id="cancelBtn" class="danger" style="display: none;">Cancel Turn</button>
       </div>
       <button id="sendBtn">Execute Turn</button>
     </div>
@@ -478,8 +716,10 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     const cancelBtn = document.getElementById('cancelBtn');
     const scanBtn = document.getElementById('scanBtn');
     const statusBadge = document.getElementById('statusBadge');
+    const modelPill = document.getElementById('modelPill');
     const stagedContainer = document.getElementById('stagedContainer');
     const proofContainer = document.getElementById('proofContainer');
+    const stepPipeline = document.getElementById('stepPipeline');
 
     let currentStreamingElem = null;
 
@@ -498,17 +738,34 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
       vscode.postMessage({ command: 'scanWorkspace' });
     });
 
+    document.querySelectorAll('.quick-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        const p = el.getAttribute('data-prompt');
+        if (p) {
+          promptInput.value = p;
+          sendBtn.click();
+        }
+      });
+    });
+
     window.addEventListener('message', (event) => {
       const msg = event.data;
       switch (msg.type) {
         case 'statusUpdate':
           if (msg.connected) {
-            statusBadge.className = 'status-badge online';
+            statusBadge.className = 'pill online';
             statusBadge.textContent = 'TrueForge: Online';
+            if (msg.activeModel) {
+              modelPill.textContent = msg.activeModel.split('/').pop() || msg.activeModel;
+            }
           } else {
-            statusBadge.className = 'status-badge offline';
+            statusBadge.className = 'pill offline';
             statusBadge.textContent = 'TrueForge: Offline';
           }
+          break;
+
+        case 'executionStep':
+          updateStepPipeline(msg.step);
           break;
 
         case 'turnStarted':
@@ -540,7 +797,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
         case 'userMessage':
           const userElem = document.createElement('div');
           userElem.className = 'message user';
-          userElem.innerHTML = '<strong>User:</strong> ' + msg.text;
+          userElem.innerHTML = '<strong>Developer:</strong> ' + escapeHtml(msg.text);
           chat.appendChild(userElem);
           chat.scrollTop = chat.scrollHeight;
           break;
@@ -554,14 +811,7 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
           break;
 
         case 'contextReceipt':
-          const r = msg.receipt;
-          const receiptBox = document.createElement('div');
-          receiptBox.className = 'receipt-box';
-          receiptBox.innerHTML = '<div class="receipt-header">📋 Context Selection Receipt (' + r.totalTokensUsed + ' / ' + r.tokenBudget + ' tokens)</div>' +
-            '<div><strong>Selected:</strong> ' + r.selectedFiles.map(f => f.filePath + ' (' + f.score + 'pts)').join(', ') + '</div>' +
-            (r.excludedFiles.length > 0 ? '<div style="color:var(--text-muted); margin-top:2px;"><strong>Excluded:</strong> ' + r.excludedFiles.length + ' candidate files</div>' : '');
-          chat.appendChild(receiptBox);
-          chat.scrollTop = chat.scrollHeight;
+          renderContextReceipt(msg.receipt);
           break;
 
         case 'stagedPatches':
@@ -580,37 +830,144 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
           chat.appendChild(logElem);
           chat.scrollTop = chat.scrollHeight;
           break;
+
+        case 'error':
+          const errElem = document.createElement('div');
+          errElem.className = 'message';
+          errElem.style.background = '#450a0a';
+          errElem.style.borderColor = '#b91c1c';
+          errElem.style.color = '#fecaca';
+          errElem.innerHTML = '<strong>Error Trapped by Sentinel:</strong> ' + escapeHtml(msg.message);
+          chat.appendChild(errElem);
+          chat.scrollTop = chat.scrollHeight;
+          break;
       }
     });
+
+    function updateStepPipeline(step) {
+      document.querySelectorAll('.step-node').forEach(n => {
+        n.classList.remove('active');
+      });
+      const target = document.getElementById('step-' + step);
+      if (target) {
+        target.classList.add('active');
+      }
+    }
+
+    function renderContextReceipt(r) {
+      const receiptBox = document.createElement('div');
+      receiptBox.className = 'receipt-box';
+      const pct = Math.min(100, Math.round((r.totalTokensUsed / r.tokenBudget) * 100));
+
+      let selectedList = r.selectedFiles.map(f => 
+        '<li style="margin-bottom:2px;"><code>' + f.filePath + '</code> (' + f.estimatedTokens + ' tok, score: ' + f.score + ') - <em>' + escapeHtml(f.relevanceRationale) + '</em></li>'
+      ).join('');
+
+      let excludedList = r.excludedFiles.map(e =>
+        '<li><code>' + e.filePath + '</code>: ' + escapeHtml(e.exclusionReason) + '</li>'
+      ).join('');
+
+      receiptBox.innerHTML = 
+        '<div class="receipt-title">' +
+          '<span>📋 Context Selection Receipt</span>' +
+          '<span>' + r.totalTokensUsed + ' / ' + r.tokenBudget + ' tok (' + pct + '%)</span>' +
+        '</div>' +
+        '<div class="token-meter"><div class="token-meter-fill" style="width:' + pct + '%;"></div></div>' +
+        '<details style="cursor:pointer;"><summary><strong>' + r.selectedFiles.length + ' Selected Code Contexts</strong></summary>' +
+          '<ul style="margin:4px 0; padding-left:16px;">' + selectedList + '</ul>' +
+        '</details>' +
+        (r.excludedFiles.length > 0 ? 
+          '<details style="cursor:pointer; margin-top:4px;"><summary style="color:var(--text-muted);">' + r.excludedFiles.length + ' Excluded Candidates</summary>' +
+            '<ul style="margin:4px 0; padding-left:16px; color:var(--text-muted);">' + excludedList + '</ul>' +
+          '</details>' : '');
+
+      chat.appendChild(receiptBox);
+      chat.scrollTop = chat.scrollHeight;
+    }
 
     function renderStagedPatches(patches) {
       stagedContainer.innerHTML = '';
       if (!patches || patches.length === 0) return;
 
-      const title = document.createElement('h4');
+      const title = document.createElement('div');
+      title.style.fontWeight = '600';
       title.style.margin = '10px 0 6px 0';
+      title.style.color = 'var(--text-bright)';
       title.textContent = 'Proposed Surgical Patches (' + patches.length + ')';
       stagedContainer.appendChild(title);
 
       for (const p of patches) {
         const item = document.createElement('div');
         item.className = 'staged-patch';
-        item.innerHTML = '<div class="patch-title"><span>' + p.filePath + '</span><span style="font-size:11px; color:var(--amber);">' + p.status.toUpperCase() + '</span></div>' +
-          '<div class="patch-purpose">' + p.purpose + '</div>' +
+
+        const riskClass = 'badge risk-' + (p.riskLevel || 'low');
+        const statusClass = 'badge ' + p.status;
+
+        let hunkMarkup = '';
+        if (p.hunks && p.hunks.length > 0) {
+          hunkMarkup = '<div class="hunk-list">';
+          p.hunks.forEach((h, idx) => {
+            const checked = h.accepted !== false ? 'checked' : '';
+            hunkMarkup += '<div class="hunk-row">' +
+              '<span>' + h.header + '</span>' +
+              '<label style="cursor:pointer;"><input type="checkbox" class="hunk-toggle" data-patch="' + p.patchId + '" data-hunk="' + h.hunkId + '" ' + checked + '> Include</label>' +
+            '</div>';
+          });
+          hunkMarkup += '</div>';
+        }
+
+        item.innerHTML = 
+          '<div class="patch-header">' +
+            '<span class="file-chip">' + p.filePath + '</span>' +
+            '<div style="display:flex; gap:4px;">' +
+              '<span class="' + riskClass + '">' + (p.riskLevel || 'low') + ' risk</span>' +
+              '<span class="' + statusClass + '">' + p.status + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="patch-purpose">' + escapeHtml(p.purpose) + '</div>' +
+          hunkMarkup +
           '<div class="btn-group">' +
             '<button class="secondary review-btn" data-id="' + p.patchId + '">Review Diff</button>' +
-            '<button class="success accept-btn" data-id="' + p.patchId + '">Accept</button>' +
-            '<button class="danger reject-btn" data-id="' + p.patchId + '">Reject</button>' +
+            (p.status === 'applied' ? 
+              '<button class="danger revert-btn" data-id="' + p.patchId + '">Revert Patch</button>' :
+              '<button class="success accept-btn" data-id="' + p.patchId + '">Apply Patch</button><button class="danger reject-btn" data-id="' + p.patchId + '">Reject</button>'
+            ) +
           '</div>';
 
         item.querySelector('.review-btn').addEventListener('click', () => {
           vscode.postMessage({ command: 'reviewPatchDiff', patchId: p.patchId });
         });
-        item.querySelector('.accept-btn').addEventListener('click', () => {
-          vscode.postMessage({ command: 'acceptPatch', patchId: p.patchId });
-        });
-        item.querySelector('.reject-btn').addEventListener('click', () => {
-          vscode.postMessage({ command: 'rejectPatch', patchId: p.patchId });
+
+        const acceptBtn = item.querySelector('.accept-btn');
+        if (acceptBtn) {
+          acceptBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'acceptPatch', patchId: p.patchId });
+          });
+        }
+
+        const rejectBtn = item.querySelector('.reject-btn');
+        if (rejectBtn) {
+          rejectBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'rejectPatch', patchId: p.patchId });
+          });
+        }
+
+        const revertBtn = item.querySelector('.revert-btn');
+        if (revertBtn) {
+          revertBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'revertPatch', patchId: p.patchId });
+          });
+        }
+
+        item.querySelectorAll('.hunk-toggle').forEach(chk => {
+          chk.addEventListener('change', (e) => {
+            vscode.postMessage({
+              command: 'toggleHunk',
+              patchId: e.target.getAttribute('data-patch'),
+              hunkId: e.target.getAttribute('data-hunk'),
+              accepted: e.target.checked
+            });
+          });
         });
 
         stagedContainer.appendChild(item);
@@ -620,22 +977,43 @@ Always explain the purpose, rationale, and expected impact of any changes.`,
     function renderProofOfChange(report) {
       proofContainer.innerHTML = '';
       const box = document.createElement('div');
-      box.style.background = '#064e3b';
-      box.style.border = '1px solid #059669';
-      box.style.padding = '10px';
-      box.style.borderRadius = '6px';
-      box.style.margin = '10px 0';
+      box.className = 'proof-card';
 
-      box.innerHTML = '<div style="font-weight:bold; color:#a7f3d0; margin-bottom:4px;">✅ Proof of Change Report (Status: ' + report.status.toUpperCase() + ')</div>' +
-        '<div style="font-size:12px;"><strong>Modified Files:</strong> ' + report.filesModified.join(', ') + '</div>' +
-        '<div style="font-size:12px;"><strong>Tests Executed:</strong> ' + (report.testsExecuted.length > 0 ? report.testsExecuted.join(', ') : 'None') + '</div>' +
-        '<div style="font-size:12px;"><strong>Tests Passed:</strong> ' + (report.testsPassed ? '<span style="color:#6ee7b7">PASSED</span>' : '<span style="color:#fca5a5">UNVERIFIED/FAILED</span>') + '</div>';
+      let testRows = '';
+      if (report.testResults && report.testResults.length > 0) {
+        testRows = report.testResults.map(r => {
+          const color = r.status === 'passed' ? '#34d399' : (r.status === 'failed' ? '#f87171' : '#fbbf24');
+          return '<div class="test-result-row"><span>' + escapeHtml(r.testName) + '</span><strong style="color:' + color + ';">' + r.status.toUpperCase() + '</strong></div>';
+        }).join('');
+      } else {
+        testRows = '<div style="color:#a7f3d0;">No test executions recorded.</div>';
+      }
+
+      box.innerHTML = 
+        '<div class="proof-header">' +
+          '<span>🛡️ Proof-Carrying Code Report</span>' +
+          '<span class="badge" style="background:#064e3b; color:#a7f3d0; border:1px solid #10b981;">' + report.status.toUpperCase() + '</span>' +
+        '</div>' +
+        '<div style="margin-bottom:6px;"><strong>Modified Files (' + report.filesModified.length + '):</strong> ' + (report.filesModified.join(', ') || 'None') + '</div>' +
+        '<div style="margin-bottom:6px;"><strong>Patches:</strong> ' + report.patchesAccepted + ' accepted / ' + report.patchesProposed + ' proposed</div>' +
+        '<div style="font-weight:600; margin-top:8px; margin-bottom:4px;">Verification Results:</div>' +
+        '<div style="background:rgba(0,0,0,0.2); padding:6px; border-radius:4px;">' + testRows + '</div>' +
+        (report.remainingRisks && report.remainingRisks.length > 0 ? 
+          '<div style="margin-top:6px; color:#fde68a;">⚠️ <strong>Advisory:</strong> ' + escapeHtml(report.remainingRisks.join('; ')) + '</div>' : '');
 
       proofContainer.appendChild(box);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
   </script>
 </body>
 </html>`;
   }
 }
-

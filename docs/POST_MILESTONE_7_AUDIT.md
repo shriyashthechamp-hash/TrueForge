@@ -309,3 +309,4 @@ The following 3 files were modified in Flask:
 1. **Groq Model Identifier**: TrueForge must run with model `groq/qwen-3-8-27b`. The older `groq/llama-3-3-70b-versatile` remains inactive on this Groq tier.
 2. **TrueForge SSRF Policy**: The TrueForge daemon must continue running with `NETWORK_POLICY_ENABLED=false` so the local MCP SSE server on `localhost:9099` can connect.
 3. **Nested Secret Masking**: While `flask config` fulfills the specification for configuration keys, production deployment should add recursive masking for nested dictionaries.
+

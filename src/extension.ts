@@ -186,3 +186,10 @@ export async function deactivate(): Promise<void> {
   }
 }
 
+export { TrueForgeHarnessClient } from './agent/TrueForgeHarnessClient';
+export { SentinelMcpServer } from './mcp/SentinelMcpServer';
+export { CodebaseMri } from './context/CodebaseMri';
+export { ContextAuction } from './context/ContextAuction';
+export { PatchStagingManager } from './diff/PatchStagingManager';
+
+

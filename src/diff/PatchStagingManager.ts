@@ -174,6 +174,10 @@ export class PatchStagingManager {
 
     const currentSha = this.computeSha256(currentContent);
     if (patch.originalContent !== '' && currentSha !== patch.originalSha256) {
+      if (currentSha === this.computeSha256(patch.proposedContent)) {
+        patch.status = 'applied';
+        return { appliedContent: currentContent, relativePath: patch.filePath };
+      }
       throw new PatchConflictError(patch.filePath, patch.originalSha256, currentSha);
     }
 

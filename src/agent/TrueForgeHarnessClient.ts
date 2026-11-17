@@ -125,9 +125,7 @@ export class TrueForgeHarnessClient {
         },
         body: JSON.stringify({
           manifest: {
-            type: 'custom',
-            name: 'google',
-            base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+            type: 'google-gemini',
             auth: {
               api_key: key,
             },
@@ -138,19 +136,28 @@ export class TrueForgeHarnessClient {
                 properties: {
                   context_length: 1048576,
                   max_output_tokens: 65536,
+                  reasoning_efforts: ['low', 'medium', 'high'],
                 },
               },
               {
-                model_id: 'gemini-2.5-flash',
-                name: 'gemini-2-5-flash',
+                model_id: 'gemini-flash-lite-latest',
+                name: 'gemini-flash-lite-latest',
                 properties: {
                   context_length: 1048576,
                   max_output_tokens: 65536,
                 },
               },
               {
-                model_id: 'gemini-flash-lite-latest',
-                name: 'gemini-flash-lite-latest',
+                model_id: 'gemini-3.5-flash',
+                name: 'gemini-3-5-flash',
+                properties: {
+                  context_length: 1048576,
+                  max_output_tokens: 65536,
+                },
+              },
+              {
+                model_id: 'gemini-2.5-flash',
+                name: 'gemini-2-5-flash',
                 properties: {
                   context_length: 1048576,
                   max_output_tokens: 65536,
@@ -290,7 +297,18 @@ export class TrueForgeHarnessClient {
       if (direct) return direct;
     }
 
-    // 1. Highest priority: Primary Google Gemini 3.8 Flash (gemini-3.8-flash)
+    // 1. Highest priority: Native Google Gemini 3.8 Flash (google-gemini/gemini-3-8-flash)
+    const nativeGemini38 = models.find(
+      (m) =>
+        m.name.startsWith('google-gemini/') &&
+        (m.modelId === 'gemini-3.8-flash' ||
+          m.name.includes('gemini-3-8-flash') ||
+          m.name.includes('gemini-3.8-flash')) &&
+        m.isAvailable
+    );
+    if (nativeGemini38) return nativeGemini38;
+
+    // 2. Next: Primary Google Gemini 3.8 Flash from any registered provider
     const gemini38 = models.find(
       (m) =>
         (m.modelId === 'gemini-3.8-flash' ||
@@ -300,17 +318,23 @@ export class TrueForgeHarnessClient {
     );
     if (gemini38) return gemini38;
 
-    // 2. Any other preferred or available Google Gemini model
+    // 3. Any other native Google Gemini model (e.g. google-gemini/gemini-flash-lite-latest)
+    const nativeGemini = models.find(
+      (m) => m.name.startsWith('google-gemini/') && m.isAvailable
+    );
+    if (nativeGemini) return nativeGemini;
+
+    // 4. Any other preferred or available Google Gemini model
     const anyGemini = models.find(
       (m) => (m.provider.toLowerCase().includes('google') || m.name.includes('gemini')) && m.isAvailable
     );
     if (anyGemini) return anyGemini;
 
-    // 3. Any explicitly marked preferred available model (BYO-model compatibility)
+    // 5. Any explicitly marked preferred available model (BYO-model compatibility)
     const preferred = models.find((m) => m.isPreferred && m.isAvailable);
     if (preferred) return preferred;
 
-    // 4. Next priority: Any non-blacklisted available model (only if no Gemini model is registered)
+    // 6. Next priority: Any non-blacklisted available model (only if no Gemini model is registered)
     const anyUsable = models.find((m) => m.isAvailable && !m.name.startsWith('groq/'));
     if (anyUsable) return anyUsable;
 
@@ -360,13 +384,17 @@ export class TrueForgeHarnessClient {
   }
 
   public resolveFallbackModel(): string {
+    // Prefer native google-gemini models for full thought-signature support during tool replays
     if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-flash-lite-latest')) {
-      return 'google/gemini-flash-lite-latest';
+      return 'google-gemini/gemini-flash-lite-latest';
+    }
+    if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-3.5-flash')) {
+      return 'google-gemini/gemini-3-5-flash';
     }
     if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-2.5-flash')) {
-      return 'google/gemini-2-5-flash';
+      return 'google-gemini/gemini-2-5-flash';
     }
-    return 'google/gemini-flash-lite-latest';
+    return 'google-gemini/gemini-flash-lite-latest';
   }
 
   public async ensureNamedAgent(options?: {
@@ -381,10 +409,12 @@ export class TrueForgeHarnessClient {
       TrueForgeHarnessClient.quotaExhaustedModels.has(selectedModel.toLowerCase()) ||
       ((selectedModel.includes('gemini-3-8-flash') || selectedModel.includes('gemini-3.8-flash')) &&
         (TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-3.8-flash') ||
-          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-3-8-flash'))) ||
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-3-8-flash') ||
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google-gemini/gemini-3-8-flash'))) ||
       ((selectedModel.includes('gemini-2-5-flash') || selectedModel.includes('gemini-2.5-flash')) &&
         (TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-2.5-flash') ||
-          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-2-5-flash')))
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google/gemini-2-5-flash') ||
+          TrueForgeHarnessClient.quotaExhaustedModels.has('google-gemini/gemini-2-5-flash')))
     ) {
       selectedModel = this.resolveFallbackModel();
     } else if (!selectedModel) {
@@ -760,11 +790,12 @@ Execute tests via run_test_command to verify your work.`;
         TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
         TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
         TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+        const fallbackModel = this.resolveFallbackModel();
         console.warn(
-          `[ModelRescue] Primary inference failure trapped: "${errText}". Rescuing turn via fallback model "google/gemini-2-5-flash"...`
+          `[ModelRescue] Primary inference failure trapped: "${errText}". Rescuing turn via fallback model "${fallbackModel}"...`
         );
         try {
-          await this.ensureNamedAgent({ modelName: 'google/gemini-2-5-flash' });
+          await this.ensureNamedAgent({ modelName: fallbackModel });
           return await this.runTurn(sessionId, prompt, callbacks, abortSignal, false);
         } catch (fallbackErr) {
           console.warn('[ModelRescue] Fallback turn execution failed:', fallbackErr);

@@ -2,7 +2,7 @@
   "name": "forge-sentinel",
   "displayName": "FORGE//SENTINEL",
   "description": "Repository-intelligent, safety-first AI coding agent for Visual Studio Code",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "TechfestIITBombay",
   "license": "MIT",
   "repository": {

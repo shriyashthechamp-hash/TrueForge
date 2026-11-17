@@ -5,6 +5,11 @@
   "version": "1.0.0",
   "publisher": "TechfestIITBombay",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shriyashthechamp-hash/TrueForge.git",
+    "directory": "FORGE-SENTINEL"
+  },
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=20.0.0"
@@ -17,7 +22,7 @@
   "main": "./dist/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:@truefoundry/trueforge-sdk --format=cjs --platform=node --target=node20",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --watch",
     "compile": "tsc -p ./",
     "test": "vitest run --fileParallelism=false",
@@ -25,7 +30,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.0",
-    "@truefoundry/trueforge-sdk": "file:../trueforge/packages/trueforge-sdk",
+    "@truefoundry/trueforge-sdk": "file:vendor/truefoundry-trueforge-sdk-0.0.0.tgz",
     "diff": "^7.0.0",
     "zod": "^3.23.8"
   },

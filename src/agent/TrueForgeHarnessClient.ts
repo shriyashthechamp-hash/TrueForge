@@ -356,30 +356,72 @@ export class TrueForgeHarnessClient {
     return models.filter((m) => m.isAvailable).map((m) => m.name);
   }
 
-  public async registerSentinelMcpServer(sseUrl: string): Promise<void> {
+  public async registerSentinelMcpServer(sseUrl: string): Promise<boolean> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/settings/mcp-servers`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: JSON.stringify({
+        manifest: {
+          type: 'remote',
+          name: 'forge-sentinel-mcp',
+          description: 'FORGE//SENTINEL VS Code Integration and Surgical Patch Staging Tools',
+          url: sseUrl,
+        },
+      }),
+    });
+
+    if (!resp.ok && resp.status !== 409) {
+      const body = await resp.text();
+      throw new Error(`Could not register MCP server in TrueForge (HTTP ${resp.status}): ${body}`);
+    }
+    return true;
+  }
+
+  public async getRegisteredMcpServer(name = 'forge-sentinel-mcp'): Promise<{ name: string; url: string; type: string } | null> {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/v1/settings/mcp-servers`, {
-        method: 'PUT',
+      const resp = await fetch(`${this.baseUrl}/api/v1/settings/mcp-servers/${name}`, {
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${this.token}`,
         },
-        body: JSON.stringify({
-          manifest: {
-            type: 'remote',
-            name: 'forge-sentinel-mcp',
-            description: 'FORGE//SENTINEL VS Code Integration and Surgical Patch Staging Tools',
-            url: sseUrl,
-          },
-        }),
       });
+      if (resp.status === 404) return null;
+      if (!resp.ok) return null;
+      const data: any = await resp.json();
+      const manifest = data?.manifest ?? data;
+      return {
+        name: manifest.name ?? name,
+        url: manifest.url ?? '',
+        type: manifest.type ?? 'remote',
+      };
+    } catch {
+      return null;
+    }
+  }
 
-      if (!resp.ok && resp.status !== 409) {
-        const body = await resp.text();
-        console.warn(`Warning: Could not register MCP server in TrueForge (HTTP ${resp.status}): ${body}`);
-      }
-    } catch (err) {
-      console.warn('Warning: TrueForge MCP server registration failed:', err);
+  public async ensureMcpServerSynchronized(sseUrl: string): Promise<{ synchronized: boolean; registeredUrl?: string }> {
+    const existing = await this.getRegisteredMcpServer('forge-sentinel-mcp');
+    if (existing && existing.url === sseUrl) {
+      return { synchronized: true, registeredUrl: existing.url };
+    }
+    await this.registerSentinelMcpServer(sseUrl);
+    return { synchronized: true, registeredUrl: sseUrl };
+  }
+
+  public async checkMcpServerHealth(mcpHealthUrl = 'http://localhost:9099/healthz'): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const resp = await fetch(mcpHealthUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!resp.ok) return false;
+      const data: any = await resp.json().catch(() => ({}));
+      return data?.status === 'ok' && data?.server === 'forge-sentinel-mcp';
+    } catch {
+      return false;
     }
   }
 

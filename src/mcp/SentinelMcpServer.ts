@@ -40,6 +40,10 @@ export class SentinelMcpServer {
     return `http://localhost:${this.port}/sse`;
   }
 
+  public getHealthUrl(): string {
+    return `http://localhost:${this.port}/healthz`;
+  }
+
   private assertSafePath(targetPath: string): string {
     const resolved = this.patchManager.assertInsideWorkspace(targetPath);
     const baseLower = path.basename(resolved).toLowerCase();
@@ -668,28 +672,43 @@ export class SentinelMcpServer {
       res.end('Not found');
     });
 
-    const initialPort = this.port;
-    const tryListen = (targetPort: number): Promise<number> => {
-      return new Promise<number>((resolve, reject) => {
-        const onError = (err: any) => {
-          this.httpServer?.removeListener('error', onError);
-          if (err.code === 'EADDRINUSE' && targetPort < initialPort + 50) {
-            resolve(tryListen(targetPort + 1));
-          } else {
-            reject(err);
+    const targetPort = this.port;
+    await new Promise<void>((resolve, reject) => {
+      const onError = async (err: any) => {
+        this.httpServer?.removeListener('error', onError);
+        if (err.code === 'EADDRINUSE') {
+          // Check if an existing Sentinel MCP server is already healthily serving on this authoritative port
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 800);
+            const resp = await fetch(`http://localhost:${targetPort}/healthz`, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (resp.ok) {
+              const data: any = await resp.json().catch(() => ({}));
+              if (data?.server === 'forge-sentinel-mcp' && data?.status === 'ok') {
+                resolve();
+                return;
+              }
+            }
+          } catch {
+            // Not reachable as a healthy Sentinel MCP server
           }
-        };
+          reject(
+            new Error(
+              `Sentinel MCP Server failed to bind to authoritative port ${targetPort}: Port is already in use by another process. Please release port ${targetPort} or configure forgeSentinel.mcpPort.`
+            )
+          );
+        } else {
+          reject(err);
+        }
+      };
 
-        this.httpServer?.once('error', onError);
-        this.httpServer?.listen(targetPort, () => {
-          this.httpServer?.removeListener('error', onError);
-          this.port = targetPort;
-          resolve(targetPort);
-        });
+      this.httpServer?.once('error', onError);
+      this.httpServer?.listen(targetPort, () => {
+        this.httpServer?.removeListener('error', onError);
+        resolve();
       });
-    };
-
-    await tryListen(this.port);
+    });
   }
 
   public async stop(): Promise<void> {

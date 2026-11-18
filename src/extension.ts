@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { TrueForgeHarnessClient } from './agent/TrueForgeHarnessClient.js';
+import { ConnectionLifecycleManager } from './agent/ConnectionLifecycleManager.js';
 import { CodebaseMri } from './context/CodebaseMri.js';
 import { ContextAuction } from './context/ContextAuction.js';
 import { PatchStagingManager } from './diff/PatchStagingManager.js';
@@ -13,6 +14,7 @@ import { SentinelAgentViewProvider } from './ui/SentinelAgentViewProvider.js';
 import { StagedPatchesTreeDataProvider } from './ui/StagedPatchesTreeDataProvider.js';
 
 let mcpServerInstance: SentinelMcpServer | null = null;
+let connectionManagerInstance: ConnectionLifecycleManager | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -40,16 +42,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.registerTreeDataProvider('forge-sentinel.flightRecorder', flightRecorderTreeProvider)
   );
 
-  const mcpPort = 9099;
+  const mcpPort = config.get<number>('mcpPort', 9099);
   mcpServerInstance = new SentinelMcpServer(workspaceRoot, patchManager, mri, auction, mcpPort);
 
   try {
     await mcpServerInstance.start();
-    await trueforgeClient.ensureGeminiProviderConfigured(undefined, workspaceRoot);
-    await trueforgeClient.registerSentinelMcpServer(mcpServerInstance.getSseUrl());
   } catch (err) {
     console.warn('FORGE//SENTINEL: MCP Server initialization notice:', err);
   }
+
+  connectionManagerInstance = new ConnectionLifecycleManager(
+    trueforgeClient,
+    mcpServerInstance,
+    workspaceRoot
+  );
+  connectionManagerInstance.startMonitoring();
 
   const agentViewProvider = new SentinelAgentViewProvider(
     context.extensionUri,
@@ -60,7 +67,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     trueforgeClient,
     flightRecorder,
     stagedPatchesTreeProvider,
-    flightRecorderTreeProvider
+    flightRecorderTreeProvider,
+    mcpServerInstance,
+    connectionManagerInstance
   );
 
   context.subscriptions.push(
@@ -180,6 +189,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  if (connectionManagerInstance) {
+    connectionManagerInstance.dispose();
+    connectionManagerInstance = null;
+  }
   if (mcpServerInstance) {
     await mcpServerInstance.stop();
     mcpServerInstance = null;
@@ -191,5 +204,6 @@ export { SentinelMcpServer } from './mcp/SentinelMcpServer';
 export { CodebaseMri } from './context/CodebaseMri';
 export { ContextAuction } from './context/ContextAuction';
 export { PatchStagingManager } from './diff/PatchStagingManager';
+export { ConnectionLifecycleManager } from './agent/ConnectionLifecycleManager';
 
 

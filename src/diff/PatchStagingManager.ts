@@ -118,6 +118,13 @@ export class PatchStagingManager {
       createdAt: new Date().toISOString(),
     };
 
+    // If a pending staged patch already exists for this exact relativePath, remove it so the new proposal supersedes it
+    for (const [existingId, existingPatch] of this.stagedPatches.entries()) {
+      if (existingPatch.filePath === relativePath && existingPatch.status === 'staged') {
+        this.stagedPatches.delete(existingId);
+      }
+    }
+
     this.stagedPatches.set(patchId, staged);
     return staged;
   }

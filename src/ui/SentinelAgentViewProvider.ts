@@ -10,6 +10,8 @@ import type { StagedPatchesTreeDataProvider } from './StagedPatchesTreeDataProvi
 import type { FlightRecorderTreeDataProvider } from './FlightRecorderTreeDataProvider.js';
 import type { AgentExecutionStep, ProofOfChangeReport } from '../shared/types.js';
 import { ModelRescue } from '../resilience/ModelRescue.js';
+import type { ConnectionLifecycleManager, DetailedConnectionStatus } from '../agent/ConnectionLifecycleManager.js';
+import type { SentinelMcpServer } from '../mcp/SentinelMcpServer.js';
 
 export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'forge-sentinel.agentPanel';
@@ -29,7 +31,9 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     private readonly trueforge: TrueForgeHarnessClient,
     private readonly flightRecorder: FlightRecorder,
     private readonly stagedPatchesTreeProvider?: StagedPatchesTreeDataProvider,
-    private readonly flightRecorderTreeProvider?: FlightRecorderTreeDataProvider
+    private readonly flightRecorderTreeProvider?: FlightRecorderTreeDataProvider,
+    private readonly mcpServer?: SentinelMcpServer,
+    private connectionManager?: ConnectionLifecycleManager
   ) {}
 
   public resolveWebviewView(
@@ -88,18 +92,46 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       }
     });
 
+    if (this.connectionManager) {
+      (this.connectionManager as any).onStatusChange = (status: DetailedConnectionStatus) => {
+        this.postStatusUpdate(status);
+      };
+    }
+
     this.updateConnectionStatus();
   }
 
-  private async updateConnectionStatus(): Promise<void> {
+  public setConnectionManager(manager: ConnectionLifecycleManager): void {
+    this.connectionManager = manager;
+    (this.connectionManager as any).onStatusChange = (status: DetailedConnectionStatus) => {
+      this.postStatusUpdate(status);
+    };
+  }
+
+  public async updateConnectionStatus(): Promise<DetailedConnectionStatus> {
+    if (this.connectionManager) {
+      const status = await this.connectionManager.triggerImmediateCheck();
+      this.postStatusUpdate(status);
+      return status;
+    }
+
     try {
       const health = await this.trueforge.checkHealth();
       const authoritative = await this.trueforge.resolveAuthoritativeModel();
       const models = await this.trueforge.getAvailableModels();
-      this._view?.webview.postMessage({
-        type: 'statusUpdate',
-        connected: true,
-        version: health.version ?? '0.0.0',
+      let mcpOnline = false;
+      if (this.mcpServer) {
+        mcpOnline = await this.trueforge.checkMcpServerHealth(this.mcpServer.getHealthUrl());
+      }
+      const isFullyOnline = health.status === 'ok' && (!this.mcpServer || mcpOnline);
+
+      const status: DetailedConnectionStatus = {
+        state: isFullyOnline ? 'connected' : 'degraded_mcp',
+        connected: isFullyOnline,
+        daemonOnline: health.status === 'ok',
+        daemonVersion: health.version ?? '0.0.0',
+        mcpOnline,
+        mcpSynchronized: isFullyOnline,
         activeModel: authoritative.displayName,
         modelName: authoritative.name,
         models: models.map((m) => ({
@@ -107,14 +139,29 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
           displayName: m.displayName,
           isAvailable: m.isAvailable,
         })),
-      });
+        error: isFullyOnline ? undefined : 'Sentinel MCP server offline or not synchronized',
+      };
+      this.postStatusUpdate(status);
+      return status;
     } catch {
-      this._view?.webview.postMessage({
-        type: 'statusUpdate',
+      const status: DetailedConnectionStatus = {
+        state: 'disconnected',
         connected: false,
-        error: 'TrueForge daemon unreachable on localhost:8790',
-      });
+        daemonOnline: false,
+        mcpOnline: false,
+        mcpSynchronized: false,
+        error: 'TrueForge daemon unreachable on port 8790',
+      };
+      this.postStatusUpdate(status);
+      return status;
     }
+  }
+
+  private postStatusUpdate(status: DetailedConnectionStatus): void {
+    this._view?.webview.postMessage({
+      type: 'statusUpdate',
+      ...status,
+    });
   }
 
   private async handleScanWorkspace(): Promise<void> {
@@ -142,6 +189,19 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
 
   public async handleUserPrompt(promptText: string): Promise<void> {
     if (!promptText || promptText.trim() === '') return;
+
+    // Pre-flight check: Ensure both TrueForge daemon and Sentinel MCP server are online and synchronized
+    const connStatus = await this.updateConnectionStatus();
+    if (!connStatus.connected) {
+      this.postExecutionStep('failed');
+      const err = connStatus.error || 'TrueForge daemon or Sentinel MCP server is unreachable.';
+      this._view?.webview.postMessage({ type: 'userMessage', text: promptText });
+      this._view?.webview.postMessage({
+        type: 'agentMessage',
+        text: `⚠️ **[Connection Error]** ${err}\n\nPlease ensure both the TrueForge daemon (\`http://localhost:8790\`) and Sentinel MCP server (\`port ${this.mcpServer?.getPort() ?? 9099}\`) are online.`,
+      });
+      return;
+    }
 
     this.currentAbortController = new AbortController();
     const taskId = `task_${Date.now()}`;
@@ -537,6 +597,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
       color: var(--crimson);
       border-color: rgba(248, 113, 113, 0.4);
     }
+    .pill.degraded {
+      color: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.4);
+    }
     .pill.model {
       color: var(--cobalt);
       border-color: rgba(56, 189, 248, 0.4);
@@ -891,13 +955,19 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'statusUpdate':
           if (msg.connected) {
             statusBadge.className = 'pill online';
-            statusBadge.textContent = 'TrueForge: Online';
+            statusBadge.textContent = 'Online (8790 + 9099)';
             if (msg.activeModel) {
               modelPill.textContent = msg.activeModel;
             }
+          } else if (msg.state === 'degraded_mcp') {
+            statusBadge.className = 'pill degraded';
+            statusBadge.textContent = 'MCP Offline (9099)';
+          } else if (msg.state === 'degraded_daemon') {
+            statusBadge.className = 'pill offline';
+            statusBadge.textContent = 'Daemon Offline (8790)';
           } else {
             statusBadge.className = 'pill offline';
-            statusBadge.textContent = 'TrueForge: Offline';
+            statusBadge.textContent = 'Offline (8790 + 9099)';
           }
           break;
 

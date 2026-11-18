@@ -85,7 +85,7 @@ Call propose_file_edit with the complete updated content of src/flask/helpers.py
 
     // 3. Inspect staged patch
     let stagedPatches = patchManager.getAllStaged();
-    let helpersPatch = stagedPatches.find(p => p.filePath.includes('helpers.py'));
+    let helpersPatch = stagedPatches.filter(p => p.filePath.includes('helpers.py')).pop();
 
     if (!helpersPatch) {
       // Deterministic staging if model didn't call tool in this turn

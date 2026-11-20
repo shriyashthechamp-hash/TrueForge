@@ -45,11 +45,11 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     private connectionManager?: ConnectionLifecycleManager
   ) {}
 
-  public resolveWebviewView(
+  public async resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
-  ): void {
+  ): Promise<void> {
     this._view = webviewView;
     logRuntime(`resolveWebviewView called. visible=${webviewView.visible}`);
 
@@ -57,6 +57,14 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [this.extensionUri],
     };
+
+    if (this.connectionManager && !this.connectionManager.getLastStatus()) {
+      try {
+        await this.connectionManager.checkStatus();
+      } catch (err) {
+        logRuntime(`Initial checkStatus notice: ${err}`);
+      }
+    }
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
@@ -137,6 +145,9 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     if (this.connectionManager) {
       const status = await this.connectionManager.triggerImmediateCheck();
       logRuntime(`updateConnectionStatus completed: connected=${status.connected}, state=${status.state}`);
+      if (this._view && this._view.webview.html.includes('Connecting...')) {
+        this._view.webview.html = this._getHtmlForWebview(this._view.webview);
+      }
       this.postStatusUpdate(status);
       return status;
     }
@@ -624,13 +635,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="
-    default-src 'none';
-    style-src ${webview.cspSource} 'unsafe-inline';
-    script-src 'nonce-${nonce}';
-    img-src ${webview.cspSource} https: data:;
-    font-src ${webview.cspSource};
-  ">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-inline' 'unsafe-eval'; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
@@ -1648,27 +1653,32 @@ Always explain the purpose, rationale, and expected impact of any changes before
     window.addEventListener('message', (event) => {
       const msg = event.data;
       switch (msg.type) {
-        case 'statusUpdate':
-          if (msg.connected) {
-            statusBadge.className = 'pill online';
-            statusBadge.textContent = 'Online (8790 + 9099)';
-            if (msg.activeModel) {
-              modelPill.textContent = msg.activeModel;
+        case 'statusUpdate': {
+          const badge = document.getElementById('statusBadge');
+          const pill = document.getElementById('modelPill');
+          const select = document.getElementById('modelSelect');
+          if (badge) {
+            if (msg.connected) {
+              badge.className = 'pill online';
+              badge.textContent = 'Online (8790 + 9099)';
+            } else if (msg.state === 'degraded_mcp') {
+              badge.className = 'pill degraded';
+              badge.textContent = 'MCP Offline (9099)';
+            } else if (msg.state === 'degraded_daemon') {
+              badge.className = 'pill offline';
+              badge.textContent = 'Daemon Offline (8790)';
+            } else {
+              badge.className = 'pill offline';
+              badge.textContent = 'Offline (8790 + 9099)';
             }
-          } else if (msg.state === 'degraded_mcp') {
-            statusBadge.className = 'pill degraded';
-            statusBadge.textContent = 'MCP Offline (9099)';
-          } else if (msg.state === 'degraded_daemon') {
-            statusBadge.className = 'pill offline';
-            statusBadge.textContent = 'Daemon Offline (8790)';
-          } else {
-            statusBadge.className = 'pill offline';
-            statusBadge.textContent = 'Offline (8790 + 9099)';
+          }
+          if (pill && msg.activeModel) {
+            pill.textContent = msg.activeModel;
           }
 
-          if (modelSelect && msg.models && msg.models.length > 0) {
-            const currentSelection = msg.modelName || modelSelect.value;
-            modelSelect.innerHTML = '';
+          if (select && msg.models && msg.models.length > 0) {
+            const currentSelection = msg.modelName || select.value;
+            select.innerHTML = '';
             for (const m of msg.models) {
               if (!m.isAvailable) continue;
               const opt = document.createElement('option');
@@ -1677,10 +1687,11 @@ Always explain the purpose, rationale, and expected impact of any changes before
               if (m.name === currentSelection || (!currentSelection && m.name.includes('gemini-3-8-flash'))) {
                 opt.selected = true;
               }
-              modelSelect.appendChild(opt);
+              select.appendChild(opt);
             }
           }
           break;
+        }
 
         case 'executionStep':
           updateStepPipeline(msg.step);

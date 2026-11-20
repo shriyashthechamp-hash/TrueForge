@@ -55,6 +55,14 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   private conversationHistoryTokens = 0;
   private recordedToolResults: Array<{ id: string; toolName?: string; result: unknown }> = [];
   private userSelectedModel?: string;
+  private readonly disposables: vscode.Disposable[] = [];
+
+  public dispose(): void {
+    while (this.disposables.length) {
+      const d = this.disposables.pop();
+      d?.dispose();
+    }
+  }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -84,77 +92,79 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     };
 
     // Attach message listener BEFORE setting HTML to prevent early message dropping
-    webviewView.webview.onDidReceiveMessage(async (message) => {
-      logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
-      switch (message.command) {
-        case 'submitPrompt': {
-          logRuntime(`submitPrompt received. text length=${message.text?.length}, correlationId=${message.correlationId}`);
-          await this.handleUserPrompt(message.text, message.correlationId, message.clientTrace);
-          break;
-        }
-        case 'traceStageP': {
-          logTrace({
-            stage: 'P',
-            stageName: 'Final assistant message renders in webview',
-            correlationId: message.correlationId || 'unknown',
-            timestamp: new Date().toISOString(),
-            success: true,
-          });
-          break;
-        }
-        case 'cancelTurn': {
-          this.handleCancelTurn();
-          break;
-        }
-        case 'scanWorkspace': {
-          await this.handleScanWorkspace();
-          break;
-        }
-        case 'acceptPatch': {
-          await this.handlePatchDecision(message.patchId, 'accept');
-          break;
-        }
-        case 'rejectPatch': {
-          await this.handlePatchDecision(message.patchId, 'reject');
-          break;
-        }
-        case 'revertPatch': {
-          await this.handleRevertPatch(message.patchId);
-          break;
-        }
-        case 'toggleHunk': {
-          this.patchManager.setHunkDecision(message.patchId, message.hunkId, message.accepted);
-          this.refreshStagedPatchesUI();
-          break;
-        }
-        case 'reviewPatchDiff': {
-          await this.handleReviewDiff(message.patchId);
-          break;
-        }
-        case 'refreshStatus': {
-          logRuntime('Received refreshStatus command from webview');
-          await this.updateConnectionStatus();
-          break;
-        }
-        case 'selectModel': {
-          this.userSelectedModel = message.modelName;
-          this.activeSessionId = undefined;
-          if (this.connectionManager) {
-            this.connectionManager.setPreferredModel(this.userSelectedModel);
+    this.disposables.push(
+      webviewView.webview.onDidReceiveMessage(async (message) => {
+        logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
+        switch (message.command) {
+          case 'submitPrompt': {
+            logRuntime(`submitPrompt received. text length=${message.text?.length}, correlationId=${message.correlationId}`);
+            await this.handleUserPrompt(message.text, message.correlationId, message.clientTrace);
+            break;
           }
-          await this.updateConnectionStatus();
-          break;
+          case 'traceStageP': {
+            logTrace({
+              stage: 'P',
+              stageName: 'Final assistant message renders in webview',
+              correlationId: message.correlationId || 'unknown',
+              timestamp: new Date().toISOString(),
+              success: true,
+            });
+            break;
+          }
+          case 'cancelTurn': {
+            this.handleCancelTurn(message.correlationId);
+            break;
+          }
+          case 'scanWorkspace': {
+            await this.handleScanWorkspace(message.correlationId);
+            break;
+          }
+          case 'acceptPatch': {
+            await this.handlePatchDecision(message.patchId, 'accept');
+            break;
+          }
+          case 'rejectPatch': {
+            await this.handlePatchDecision(message.patchId, 'reject');
+            break;
+          }
+          case 'revertPatch': {
+            await this.handleRevertPatch(message.patchId);
+            break;
+          }
+          case 'toggleHunk': {
+            this.patchManager.setHunkDecision(message.patchId, message.hunkId, message.accepted);
+            this.refreshStagedPatchesUI();
+            break;
+          }
+          case 'reviewPatchDiff': {
+            await this.handleReviewDiff(message.patchId);
+            break;
+          }
+          case 'refreshStatus': {
+            logRuntime('Received refreshStatus command from webview');
+            await this.updateConnectionStatus();
+            break;
+          }
+          case 'selectModel': {
+            this.userSelectedModel = message.modelName;
+            this.activeSessionId = undefined;
+            if (this.connectionManager) {
+              this.connectionManager.setPreferredModel(this.userSelectedModel);
+            }
+            await this.updateConnectionStatus();
+            break;
+          }
+          case 'openApiKeyConfig': {
+            await this.handleOpenApiKeyConfig(message.correlationId);
+            break;
+          }
+          case 'clientError': {
+            logRuntime(`Webview reported client error: ${message.error}`);
+            break;
+          }
         }
-        case 'openApiKeyConfig': {
-          await this.handleOpenApiKeyConfig();
-          break;
-        }
-        case 'clientError': {
-          logRuntime(`Webview reported client error: ${message.error}`);
-          break;
-        }
-      }
-    });
+      })
+    );
 
     if (this.connectionManager) {
       this.connectionManager.setStatusCallback((status: DetailedConnectionStatus) => {
@@ -241,7 +251,15 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  private async handleOpenApiKeyConfig(): Promise<void> {
+  private async handleOpenApiKeyConfig(correlationId: string = `config_${Date.now()}`): Promise<void> {
+    logRuntime(`[CONFIG_KEYS] [${correlationId}] Opening API key configuration quickpick...`);
+    logTrace({
+      stage: 'CONFIG_KEYS',
+      stageName: 'Open API Key Configuration',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+    });
     const choice = await vscode.window.showQuickPick(
       [
         { label: 'Google Gemini', description: 'Configure GEMINI_API_KEY (Primary native provider)' },
@@ -274,11 +292,27 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleScanWorkspace(): Promise<void> {
+  private async handleScanWorkspace(correlationId: string = `scan_${Date.now()}`): Promise<void> {
+    logRuntime(`[SCAN_MRI] [${correlationId}] Running Codebase MRI structural scan...`);
+    logTrace({
+      stage: 'SCAN_START',
+      stageName: 'Codebase MRI scan initiated',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+    });
     this.postExecutionStep('searching');
     this._view?.webview.postMessage({ type: 'log', message: 'Running Codebase MRI structural scan...' });
     await this.mri.scan();
     const summary = this.mri.getStructureSummary();
+    logTrace({
+      stage: 'SCAN_DONE',
+      stageName: 'Codebase MRI scan completed',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+      details: { totalFiles: summary.totalFiles, totalSymbols: summary.totalSymbols },
+    });
     this._view?.webview.postMessage({
       type: 'mriSummary',
       summary,
@@ -692,7 +726,15 @@ Always explain the purpose, rationale, and expected impact of any changes before
     }
   }
 
-  private handleCancelTurn(): void {
+  private handleCancelTurn(correlationId: string = `cancel_${Date.now()}`): void {
+    logRuntime(`[CANCEL_TURN] [${correlationId}] Aborting turn...`);
+    logTrace({
+      stage: 'CANCEL_TURN',
+      stageName: 'Cancel Turn initiated',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+    });
     if (this.currentAbortController) {
       this.currentAbortController.abort();
     }
@@ -806,12 +848,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
     const lastStatus = this.connectionManager?.getLastStatus();
     logRuntime(`_getHtmlForWebview called. lastStatus=${JSON.stringify(lastStatus)}`);
 
-    let initialBadgeClass = 'pill online';
-    let initialBadgeText = 'Online (8790 + 9099)';
-    let initialModelText = 'Gemini 3.8 Flash (Google)';
-    let initialModelOptions = `<option value="google-gemini/gemini-3-8-flash" selected>Gemini 3.8 Flash (Google)</option>
-        <option value="google-gemini/gemini-flash-lite-latest">Gemini Flash Lite (Google)</option>
-        <option value="google-gemini/gemini-3-5-flash">Gemini 3.5 Flash (Google)</option>`;
+    let initialBadgeClass = 'pill degraded';
+    let initialBadgeText = 'Connecting...';
+    let initialModelText = 'Resolving...';
+    let initialModelOptions = '<option value="">Resolving available models...</option>';
 
     if (lastStatus) {
       if (lastStatus.connected) {
@@ -840,6 +880,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
             return `<option value="${m.name}" ${isSelected ? 'selected' : ''}>${m.displayName}</option>`;
           })
           .join('\n');
+      } else if (lastStatus.activeModel) {
+        initialModelOptions = `<option value="${lastStatus.modelName || 'google-gemini/gemini-3-8-flash'}" selected>${lastStatus.activeModel}</option>`;
       }
     }
 
@@ -847,7 +889,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource}; font-src ${webview.cspSource}; connect-src ${webview.cspSource} http://localhost:8790 http://localhost:9099;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
@@ -1725,6 +1767,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
   </style>
 </head>
 <body>
+  <div id="runtimeErrorBanner" style="display:none; background:#FEE2E2; color:#D7263D; border:2px solid #D7263D; padding:8px 10px; margin-bottom:8px; font-weight:700; font-size:11px; border-radius:4px; box-shadow:2px 2px 0px #171717;"></div>
   <!-- BAUHAUS PRODUCT HEADER -->
   <div class="header">
     <div class="header-top">
@@ -1804,7 +1847,36 @@ Always explain the purpose, rationale, and expected impact of any changes before
   </div>
 
   <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
+    window.addEventListener('error', function(event) {
+      console.error('[Sentinel Error]', event.error || event.message);
+      try {
+        if (window.vscode && typeof window.vscode.postMessage === 'function') {
+          window.vscode.postMessage({
+            command: 'clientError',
+            error: String(event.message || event.error) + ' at ' + (event.filename || '') + ':' + (event.lineno || ''),
+            correlationId: currentCorrelationId
+          });
+        }
+      } catch (e) {}
+      const banner = document.getElementById('runtimeErrorBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.textContent = 'Script Error: ' + (event.message || String(event.error));
+      }
+    });
+
+    let vscode;
+    try {
+      if (typeof acquireVsCodeApi === 'function') {
+        vscode = acquireVsCodeApi();
+        window._vscodeApi = vscode;
+      } else if (window._vscodeApi) {
+        vscode = window._vscodeApi;
+      }
+    } catch (e) {
+      vscode = window._vscodeApi;
+    }
+    window.vscode = vscode;
 
     const chat = document.getElementById('chat');
     const promptInput = document.getElementById('promptInput');
@@ -1823,10 +1895,45 @@ Always explain the purpose, rationale, and expected impact of any changes before
     let streamBuffer = '';
     let currentCorrelationId = null;
 
+    function postClientAction(actionName, payload) {
+      payload = payload || {};
+      const correlationId = 'act_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      console.log('[Sentinel Client Action]', actionName, correlationId, payload);
+      try {
+        if (vscode && typeof vscode.postMessage === 'function') {
+          vscode.postMessage(Object.assign({
+            command: actionName,
+            correlationId: correlationId,
+            timestamp: new Date().toISOString()
+          }, payload));
+          return correlationId;
+        } else {
+          console.error('[Sentinel] vscode.postMessage is not available for action:', actionName);
+          return null;
+        }
+      } catch (err) {
+        console.error('[Sentinel] postClientAction failed:', err);
+        return null;
+      }
+    }
+
     function executeTurn() {
       const now = new Date().toISOString();
       const correlationId = 'turn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       currentCorrelationId = correlationId;
+
+      const text = promptInput ? promptInput.value.trim() : '';
+      if (!text) {
+        if (promptInput) {
+          promptInput.style.borderColor = 'var(--signal-red)';
+          promptInput.placeholder = 'Please enter an instruction or click a task chip above...';
+          setTimeout(() => {
+            promptInput.style.borderColor = '';
+            promptInput.placeholder = "Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision.";
+          }, 2500);
+        }
+        return;
+      }
 
       // Stage A: Button click handler invoked
       const traceA = {
@@ -1838,10 +1945,6 @@ Always explain the purpose, rationale, and expected impact of any changes before
       };
 
       // Stage B: Prompt value successfully retrieved
-      const text = promptInput ? promptInput.value.trim() : '';
-      if (!text) {
-        return;
-      }
       const traceB = {
         stage: 'B',
         stageName: 'Prompt value successfully retrieved',
@@ -1881,15 +1984,14 @@ Always explain the purpose, rationale, and expected impact of any changes before
       };
       clientTrace.push(traceD);
 
-      vscode.postMessage({
-        command: 'submitPrompt',
+      postClientAction('submitPrompt', {
         text: text,
-        correlationId: correlationId,
         clientTrace: clientTrace
       });
     }
 
-    sendBtn?.addEventListener('click', () => {
+    sendBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
       executeTurn();
     });
 
@@ -1900,26 +2002,30 @@ Always explain the purpose, rationale, and expected impact of any changes before
       }
     });
 
-    cancelBtn?.addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancelTurn' });
+    cancelBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      postClientAction('cancelTurn', { command: 'cancelTurn' });
     });
 
-    scanBtn?.addEventListener('click', () => {
-      vscode.postMessage({ command: 'scanWorkspace' });
+    scanBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      postClientAction('scanWorkspace', { command: 'scanWorkspace' });
     });
 
-    configKeysBtn?.addEventListener('click', () => {
-      vscode.postMessage({ command: 'openApiKeyConfig' });
+    configKeysBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      postClientAction('openApiKeyConfig', { command: 'openApiKeyConfig' });
     });
 
     modelSelect?.addEventListener('change', () => {
       if (modelSelect.value) {
-        vscode.postMessage({ command: 'selectModel', modelName: modelSelect.value });
+        postClientAction('selectModel', { command: 'selectModel', modelName: modelSelect.value });
       }
     });
 
     document.querySelectorAll('.quick-chip').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
         const p = el.getAttribute('data-prompt');
         if (p && promptInput) {
           promptInput.value = p;
@@ -1928,14 +2034,17 @@ Always explain the purpose, rationale, and expected impact of any changes before
       });
     });
 
-    window.addEventListener('error', (event) => {
-      try {
-        vscode.postMessage({
-          command: 'clientError',
-          error: event.message + ' at ' + event.filename + ':' + event.lineno,
-          correlationId: currentCorrelationId
-        });
-      } catch (e) {}
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!target) return;
+      const chip = target.closest ? target.closest('.quick-chip') : null;
+      if (chip && chip !== target) {
+        const p = chip.getAttribute('data-prompt');
+        if (p && promptInput) {
+          promptInput.value = p;
+          executeTurn();
+        }
+      }
     });
 
     window.addEventListener('message', (event) => {
@@ -1964,20 +2073,23 @@ Always explain the purpose, rationale, and expected impact of any changes before
             pill.textContent = msg.activeModel;
           }
 
-          if (select && msg.models && msg.models.length > 0) {
-            const currentSelection = msg.modelName || select.value;
-            select.innerHTML = '';
-            for (const m of msg.models) {
-              if (!m.isAvailable) continue;
-              const opt = document.createElement('option');
-              opt.value = m.name;
-              opt.textContent = m.displayName;
-              if (m.name === currentSelection || (!currentSelection && m.name.includes('gemini-3-8-flash'))) {
-                opt.selected = true;
+          if (select) {
+            if (msg.models && msg.models.length > 0) {
+              const currentSelection = msg.modelName || select.value;
+              select.innerHTML = '';
+              for (const m of msg.models) {
+                if (!m.isAvailable) continue;
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.displayName;
+                if (m.name === currentSelection || (!currentSelection && m.name.includes('gemini-3-8-flash'))) {
+                  opt.selected = true;
+                }
+                select.appendChild(opt);
               }
-              select.appendChild(opt);
             }
             if (select.children.length === 0 && (msg.activeModel || msg.modelName)) {
+              select.innerHTML = '';
               const opt = document.createElement('option');
               opt.value = msg.modelName || 'google-gemini/gemini-3-8-flash';
               opt.textContent = msg.activeModel || 'Gemini 3.8 Flash (Google)';
@@ -2101,6 +2213,29 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'proofOfChange':
           renderProofOfChange(msg.report);
           break;
+
+        case 'mriSummary': {
+          const mriElem = document.createElement('div');
+          mriElem.className = 'message assistant';
+          const s = msg.summary || {};
+          const langList = s.languages ? Object.entries(s.languages).map(function(entry) { return entry[0] + ': ' + entry[1]; }).join(', ') : 'N/A';
+          mriElem.innerHTML = '<div class="message-tag">Codebase MRI Analysis</div>' +
+            '<div style="font-weight:700; margin-bottom:6px; color:var(--ink-black);">Workspace Structure Indexed</div>' +
+            '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:11px; margin-bottom:8px;">' +
+              '<div style="background:var(--paper-white); padding:6px; border:1px solid var(--border-bold); box-shadow:var(--shadow-sm);">' +
+                '<div style="color:var(--ink-muted); font-size:10px;">TOTAL FILES</div>' +
+                '<div style="font-size:16px; font-weight:800;">' + (s.totalFiles ?? 0) + '</div>' +
+              '</div>' +
+              '<div style="background:var(--paper-white); padding:6px; border:1px solid var(--border-bold); box-shadow:var(--shadow-sm);">' +
+                '<div style="color:var(--ink-muted); font-size:10px;">TOTAL SYMBOLS</div>' +
+                '<div style="font-size:16px; font-weight:800;">' + (s.totalSymbols ?? 0) + '</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="font-size:11px; color:var(--ink-muted);"><strong>Languages:</strong> ' + escapeHtml(langList) + '</div>';
+          chat.appendChild(mriElem);
+          chat.scrollTop = chat.scrollHeight;
+          break;
+        }
 
         case 'log':
           const logElem = document.createElement('div');
@@ -2595,11 +2730,12 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     // Multi-tier handshake: ensure immediate request and bounded retries in case frame was initializing
     function requestStatus() {
-      vscode.postMessage({ command: 'refreshStatus' });
+      postClientAction('refreshStatus');
     }
     requestStatus();
-    setTimeout(requestStatus, 300);
-    setTimeout(requestStatus, 1000);
+    setTimeout(requestStatus, 150);
+    setTimeout(requestStatus, 500);
+    setTimeout(requestStatus, 1200);
   </script>
 </body>
 </html>`;

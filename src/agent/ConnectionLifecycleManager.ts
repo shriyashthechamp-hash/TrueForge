@@ -24,6 +24,11 @@ export class ConnectionLifecycleManager {
   private readonly maxBackoffMs = 10000;
   private readonly connectedHeartbeatMs = 15000;
   private lastStatus: DetailedConnectionStatus | null = null;
+  private preferredModel?: string;
+
+  public setPreferredModel(modelName?: string): void {
+    this.preferredModel = modelName;
+  }
 
   constructor(
     private readonly trueforge: TrueForgeHarnessClient,
@@ -87,7 +92,7 @@ export class ConnectionLifecycleManager {
       }
 
       try {
-        const authoritative = await this.trueforge.resolveAuthoritativeModel();
+        const authoritative = await this.trueforge.resolveAuthoritativeModel(this.preferredModel);
         activeModel = authoritative.displayName;
         modelName = authoritative.name;
         const available = await this.trueforge.getAvailableModels();

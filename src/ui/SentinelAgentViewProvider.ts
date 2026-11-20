@@ -21,6 +21,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   private readonly modelRescue = new ModelRescue(2);
   private conversationHistoryTokens = 0;
   private recordedToolResults: Array<{ id: string; toolName?: string; result: unknown }> = [];
+  private userSelectedModel?: string;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -89,6 +90,19 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
           await this.updateConnectionStatus();
           break;
         }
+        case 'selectModel': {
+          this.userSelectedModel = message.modelName;
+          this.activeSessionId = undefined;
+          if (this.connectionManager) {
+            this.connectionManager.setPreferredModel(this.userSelectedModel);
+          }
+          await this.updateConnectionStatus();
+          break;
+        }
+        case 'openApiKeyConfig': {
+          await this.handleOpenApiKeyConfig();
+          break;
+        }
       }
     });
 
@@ -117,7 +131,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
 
     try {
       const health = await this.trueforge.checkHealth();
-      const authoritative = await this.trueforge.resolveAuthoritativeModel();
+      const authoritative = await this.trueforge.resolveAuthoritativeModel(this.userSelectedModel);
       const models = await this.trueforge.getAvailableModels();
       let mcpOnline = false;
       if (this.mcpServer) {
@@ -162,6 +176,39 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       type: 'statusUpdate',
       ...status,
     });
+  }
+
+  private async handleOpenApiKeyConfig(): Promise<void> {
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: 'Google Gemini', description: 'Configure GEMINI_API_KEY (Primary native provider)' },
+        { label: 'OpenRouter', description: 'Configure OPENROUTER_API_KEY (Multi-model fallback provider)' },
+      ],
+      { placeHolder: 'Select AI model provider to configure' }
+    );
+    if (!choice) return;
+
+    const apiKey = await vscode.window.showInputBox({
+      password: true,
+      prompt: `Enter API key for ${choice.label}`,
+      placeHolder: 'Paste secret key here (input is masked and securely stored)',
+    });
+    if (!apiKey || apiKey.trim() === '') return;
+
+    this._view?.webview.postMessage({ type: 'log', message: `Configuring ${choice.label} in TrueForge...` });
+    let success = false;
+    if (choice.label === 'Google Gemini') {
+      success = await this.trueforge.ensureGeminiProviderConfigured(apiKey.trim(), this.workspaceRoot);
+    } else {
+      success = await this.trueforge.ensureOpenRouterProviderConfigured(apiKey.trim(), this.workspaceRoot);
+    }
+
+    if (success) {
+      vscode.window.showInformationMessage(`Successfully configured ${choice.label} in TrueForge.`);
+      await this.updateConnectionStatus();
+    } else {
+      vscode.window.showErrorMessage(`Failed to configure ${choice.label} in TrueForge. Please verify daemon is running.`);
+    }
   }
 
   private async handleScanWorkspace(): Promise<void> {
@@ -221,7 +268,8 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       const configuredBudget = config.get<number>('contextBudgetTokens', 16000);
 
       await this.trueforge.ensureGeminiProviderConfigured(undefined, this.workspaceRoot);
-      const authoritative = await this.trueforge.resolveAuthoritativeModel();
+      await this.trueforge.ensureOpenRouterProviderConfigured(undefined, this.workspaceRoot);
+      const authoritative = await this.trueforge.resolveAuthoritativeModel(this.userSelectedModel);
       this._view?.webview.postMessage({
         type: 'statusUpdate',
         connected: true,
@@ -866,6 +914,17 @@ Always explain the purpose, rationale, and expected impact of any changes before
     </div>
   </div>
 
+  <!-- Provider & Model Selector Control Bar -->
+  <div class="model-bar" style="display:flex; justify-content:space-between; align-items:center; margin:6px 0 8px 0; gap:6px; padding:4px 8px; background:rgba(0,0,0,0.2); border-radius:6px; border:1px solid var(--card-border);">
+    <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0;">
+      <span style="font-size:10px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Active Model:</span>
+      <select id="modelSelect" style="flex:1; font-size:11px; background:var(--card-bg); color:var(--text-bright); border:1px solid var(--card-border); border-radius:4px; padding:3px 6px; outline:none; text-overflow:ellipsis;">
+        <option value="">Resolving available models...</option>
+      </select>
+    </div>
+    <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap; padding:3px 8px;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
+  </div>
+
   <!-- Live Execution Step Pipeline -->
   <div class="step-pipeline" id="stepPipeline">
     <div class="step-node active" id="step-idle">1. Idle</div>
@@ -918,11 +977,23 @@ Always explain the purpose, rationale, and expected impact of any changes before
     const scanBtn = document.getElementById('scanBtn');
     const statusBadge = document.getElementById('statusBadge');
     const modelPill = document.getElementById('modelPill');
+    const modelSelect = document.getElementById('modelSelect');
+    const configKeysBtn = document.getElementById('configKeysBtn');
     const stagedContainer = document.getElementById('stagedContainer');
     const proofContainer = document.getElementById('proofContainer');
     const stepPipeline = document.getElementById('stepPipeline');
 
     let currentStreamingElem = null;
+
+    modelSelect?.addEventListener('change', () => {
+      if (modelSelect.value) {
+        vscode.postMessage({ command: 'selectModel', modelName: modelSelect.value });
+      }
+    });
+
+    configKeysBtn?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'openApiKeyConfig' });
+    });
 
     sendBtn.addEventListener('click', () => {
       const text = promptInput.value.trim();
@@ -968,6 +1039,21 @@ Always explain the purpose, rationale, and expected impact of any changes before
           } else {
             statusBadge.className = 'pill offline';
             statusBadge.textContent = 'Offline (8790 + 9099)';
+          }
+
+          if (modelSelect && msg.models && msg.models.length > 0) {
+            const currentSelection = msg.modelName || modelSelect.value;
+            modelSelect.innerHTML = '';
+            for (const m of msg.models) {
+              if (!m.isAvailable) continue;
+              const opt = document.createElement('option');
+              opt.value = m.name;
+              opt.textContent = m.displayName;
+              if (m.name === currentSelection || (!currentSelection && m.name.includes('gemini-3-8-flash'))) {
+                opt.selected = true;
+              }
+              modelSelect.appendChild(opt);
+            }
           }
           break;
 

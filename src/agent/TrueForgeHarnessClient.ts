@@ -31,6 +31,7 @@ export interface TurnCallbacks {
 export class TrueForgeHarnessClient {
   private client: TrueForge;
   private geminiAutoSyncAttempted = false;
+  private openrouterAutoSyncAttempted = false;
   private sessionInstructions = new Map<string, string | undefined>();
   private static quotaExhaustedModels = new Set<string>();
 
@@ -107,9 +108,108 @@ export class TrueForgeHarnessClient {
   }
 
   /**
-   * Registers or updates Google Gemini (gemini-3.8-flash) in TrueForge's centralized model provider store
-   * when GEMINI_API_KEY is available in the environment or .env.
+   * Resolves OPENROUTER_API_KEY from process.env or local gitignored .env files without logging secrets.
    */
+  public resolveOpenRouterApiKeyFromEnvironment(workspaceRoot?: string): string | undefined {
+    const fromEnv = process.env.OPENROUTER_API_KEY?.trim();
+    if (fromEnv && fromEnv !== 'your_openrouter_api_key_here') {
+      return fromEnv;
+    }
+
+    const candidateDirs = [
+      workspaceRoot,
+      process.cwd(),
+      path.resolve(process.cwd(), 'FORGE-SENTINEL'),
+      path.resolve(process.cwd(), '..'),
+      path.resolve(process.cwd(), '..', 'FORGE-SENTINEL'),
+    ].filter((d): d is string => Boolean(d));
+
+    for (const dir of candidateDirs) {
+      for (const fileName of ['.env', '.env.local']) {
+        const envPath = path.join(dir, fileName);
+        try {
+          if (fs.existsSync(envPath)) {
+            const raw = fs.readFileSync(envPath, 'utf8');
+            for (const line of raw.split('\n')) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('#')) continue;
+              const match = trimmed.match(/^OPENROUTER_API_KEY\s*=\s*(.+)$/);
+              if (match) {
+                const val = match[1].trim().replace(/^['"]|['"]$/g, '');
+                if (val && val !== 'your_openrouter_api_key_here') {
+                  return val;
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore unreadable .env files
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Registers or updates OpenRouter in TrueForge's centralized model provider store
+   * when OPENROUTER_API_KEY is available in the environment or .env.
+   */
+  public async ensureOpenRouterProviderConfigured(apiKey?: string, workspaceRoot?: string): Promise<boolean> {
+    const key = apiKey ?? this.resolveOpenRouterApiKeyFromEnvironment(workspaceRoot);
+    if (!key) {
+      return false;
+    }
+
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/v1/settings/model-providers`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          manifest: {
+            type: 'custom',
+            name: 'openrouter',
+            base_url: 'https://openrouter.ai/api/v1',
+            auth: {
+              api_key: key,
+            },
+            models: [
+              {
+                model_id: 'google/gemini-2.5-flash',
+                name: 'gemini-2-5-flash',
+                properties: {
+                  context_length: 1048576,
+                  max_output_tokens: 4096,
+                },
+              },
+              {
+                model_id: 'meta-llama/llama-3.3-70b-instruct',
+                name: 'llama-3-3-70b-instruct',
+                properties: {
+                  context_length: 131072,
+                  max_output_tokens: 4096,
+                },
+              },
+              {
+                model_id: 'deepseek/deepseek-chat',
+                name: 'deepseek-chat',
+                properties: {
+                  context_length: 163840,
+                  max_output_tokens: 4096,
+                },
+              },
+            ],
+          },
+        }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
   public async ensureGeminiProviderConfigured(apiKey?: string, workspaceRoot?: string): Promise<boolean> {
     const key = apiKey ?? this.resolveGeminiApiKeyFromEnvironment(workspaceRoot);
     if (!key) {
@@ -211,7 +311,23 @@ export class TrueForgeHarnessClient {
       return 'GPT-OSS 20B (Groq)';
     }
     if (raw.includes('llama-3.3-70b') || raw.includes('llama-3.1-8b')) {
+      if (lowerName.startsWith('openrouter/')) {
+        return 'Llama 3.3 70B (OpenRouter)';
+      }
       return `${modelId || name} (Unavailable)`;
+    }
+    if (lowerName.startsWith('openrouter/')) {
+      const modelPart = (modelId || name.replace(/^openrouter\//, ''));
+      if (modelPart.includes('llama-3.3-70b') || modelPart.includes('llama-3-3-70b')) {
+        return 'Llama 3.3 70B (OpenRouter)';
+      }
+      if (modelPart.includes('gemini-2.5-flash') || modelPart.includes('gemini-2-5-flash')) {
+        return 'Gemini 2.5 Flash (OpenRouter)';
+      }
+      if (modelPart.includes('deepseek-chat') || modelPart.includes('deepseek')) {
+        return 'DeepSeek V3 (OpenRouter)';
+      }
+      return `${modelPart} (OpenRouter)`;
     }
     const clean = name
       .replace(/^google-gemini\//, '')
@@ -245,6 +361,21 @@ export class TrueForgeHarnessClient {
         this.geminiAutoSyncAttempted = true;
         const synced = await this.ensureGeminiProviderConfigured();
         if (synced) {
+          resp = await fetch(`${this.baseUrl}/api/v1/models`, {
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
+          if (resp.ok) {
+            json = (await resp.json()) as typeof json;
+            raw = json.data ?? [];
+          }
+        }
+      }
+
+      const hasOpenRouter = raw.some((m) => m.name.startsWith('openrouter/'));
+      if (!hasOpenRouter && !this.openrouterAutoSyncAttempted) {
+        this.openrouterAutoSyncAttempted = true;
+        const syncedOr = await this.ensureOpenRouterProviderConfigured();
+        if (syncedOr) {
           resp = await fetch(`${this.baseUrl}/api/v1/models`, {
             headers: { Authorization: `Bearer ${this.token}` },
           });
@@ -436,6 +567,13 @@ export class TrueForgeHarnessClient {
     if (!TrueForgeHarnessClient.quotaExhaustedModels.has('gemini-2.5-flash')) {
       return 'google-gemini/gemini-2-5-flash';
     }
+    // Fallback: OpenRouter verified tool-calling models
+    if (!TrueForgeHarnessClient.quotaExhaustedModels.has('openrouter/gemini-2-5-flash')) {
+      return 'openrouter/gemini-2-5-flash';
+    }
+    if (!TrueForgeHarnessClient.quotaExhaustedModels.has('openrouter/llama-3-3-70b-instruct')) {
+      return 'openrouter/llama-3-3-70b-instruct';
+    }
     return 'google-gemini/gemini-flash-lite-latest';
   }
 
@@ -597,8 +735,9 @@ Execute tests via run_test_command to verify your work.`;
     prompt: string,
     callbacks?: TurnCallbacks,
     abortSignal?: AbortSignal,
-    allowFallback = true
+    allowFallback: boolean | number = true
   ): Promise<void> {
+    const remainingRetries = typeof allowFallback === 'number' ? allowFallback : (allowFallback ? 3 : 0);
     try {
       const stream = await this.client.sessions.createTurnStream(
         sessionId,
@@ -777,24 +916,32 @@ Execute tests via run_test_command to verify your work.`;
             const errorMsg = state?.message ?? state?.error ?? (event as any).error ?? lastErrorMessage;
             const isFailure = rawStatus === 'error' || rawStatus === 'failed' || Boolean(errorMsg);
 
-            if (isFailure && allowFallback && errorMsg && this.isFallbackEligible(String(errorMsg))) {
+            if (isFailure && remainingRetries > 0 && errorMsg && this.isFallbackEligible(String(errorMsg))) {
               const trapped = String(errorMsg);
+              if (trapped.includes('flash-lite') || trapped.includes('3.5-flash-lite')) {
+                TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-flash-lite-latest');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-flash-lite-latest');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-flash-lite-latest');
+              }
               if (trapped.includes('gemini-3.8-flash') || trapped.includes('gemini-3-8-flash')) {
                 TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
                 TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
                 TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+              }
+              if (trapped.includes('gemini-3.5-flash') || trapped.includes('gemini-3-5-flash')) {
+                TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.5-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-5-flash');
+                TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-5-flash');
               }
               if (trapped.includes('gemini-2.5-flash') || trapped.includes('gemini-2-5-flash')) {
                 TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-2.5-flash');
                 TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-2-5-flash');
                 TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-2-5-flash');
               }
-              TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
-              TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
 
               const fallbackModel = this.resolveFallbackModel();
               console.warn(
-                `[ModelRescue] Primary inference failure trapped: "${errorMsg}". Rescuing turn via fallback model "${fallbackModel}"...`
+                `[ModelRescue] Primary inference failure trapped: "${errorMsg}". Rescuing turn via fallback model "${fallbackModel}" (${remainingRetries - 1} retries left)...`
               );
               const preservedInstructions = this.sessionInstructions.get(sessionId);
               try {
@@ -803,7 +950,7 @@ Execute tests via run_test_command to verify your work.`;
                   modelName: fallbackModel,
                   instructions: preservedInstructions,
                 });
-                return await this.runTurn(fallbackSessionId, prompt, callbacks, abortSignal, false);
+                return await this.runTurn(fallbackSessionId, prompt, callbacks, abortSignal, remainingRetries - 1);
               } catch (fallbackErr) {
                 console.warn('[ModelRescue] Fallback model switch failed:', fallbackErr);
               }
@@ -828,17 +975,39 @@ Execute tests via run_test_command to verify your work.`;
         return;
       }
       const errText = String(err?.message ?? err ?? '');
-      if (allowFallback && this.isFallbackEligible(errText)) {
-        TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
-        TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
-        TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+      if (remainingRetries > 0 && this.isFallbackEligible(errText)) {
+        if (errText.includes('flash-lite') || errText.includes('3.5-flash-lite')) {
+          TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-flash-lite-latest');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-flash-lite-latest');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-flash-lite-latest');
+        }
+        if (errText.includes('gemini-3.8-flash') || errText.includes('gemini-3-8-flash')) {
+          TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.8-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-8-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-8-flash');
+        }
+        if (errText.includes('gemini-3.5-flash') || errText.includes('gemini-3-5-flash')) {
+          TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-3.5-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-3-5-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-3-5-flash');
+        }
+        if (errText.includes('gemini-2.5-flash') || errText.includes('gemini-2-5-flash')) {
+          TrueForgeHarnessClient.quotaExhaustedModels.add('gemini-2.5-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google/gemini-2-5-flash');
+          TrueForgeHarnessClient.quotaExhaustedModels.add('google-gemini/gemini-2-5-flash');
+        }
         const fallbackModel = this.resolveFallbackModel();
         console.warn(
-          `[ModelRescue] Primary inference failure trapped: "${errText}". Rescuing turn via fallback model "${fallbackModel}"...`
+          `[ModelRescue] Primary inference failure trapped: "${errText}". Rescuing turn via fallback model "${fallbackModel}" (${remainingRetries - 1} retries left)...`
         );
         try {
-          await this.ensureNamedAgent({ modelName: fallbackModel });
-          return await this.runTurn(sessionId, prompt, callbacks, abortSignal, false);
+          const preservedInstructions = this.sessionInstructions.get(sessionId);
+          await this.ensureNamedAgent({ modelName: fallbackModel, instructions: preservedInstructions });
+          const fallbackSessionId = await this.createSession({
+            modelName: fallbackModel,
+            instructions: preservedInstructions,
+          });
+          return await this.runTurn(fallbackSessionId, prompt, callbacks, abortSignal, remainingRetries - 1);
         } catch (fallbackErr) {
           console.warn('[ModelRescue] Fallback turn execution failed:', fallbackErr);
         }

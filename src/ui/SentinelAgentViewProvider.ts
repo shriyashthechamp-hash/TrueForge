@@ -581,177 +581,354 @@ Always explain the purpose, rationale, and expected impact of any changes before
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
+    /* ==========================================================================
+       BAUHAUS × BOLD NEO-BRUTALISM × TECHNICAL EDITORIAL DESIGN SYSTEM
+       "Paper Protocol" Design Tokens
+       ========================================================================== */
     :root {
-      --bg: #0d1117;
-      --card-bg: #161b22;
-      --card-border: #30363d;
-      --text: #c9d1d9;
-      --text-muted: #8b949e;
-      --text-bright: #f0f6fc;
-      --cobalt: #38bdf8;
-      --cobalt-dark: #0284c7;
-      --lime: #34d399;
-      --amber: #fbbf24;
-      --crimson: #f87171;
-      --violet: #a78bfa;
-      --subtle-bg: #21262d;
+      /* Primary Surfaces */
+      --paper-warm: #F2EBDD;
+      --paper-white: #FFFFFF;
+      --paper-secondary: #EAE5D9;
+      --paper-neutral: #E5E2DA;
+      
+      /* Ink & Boundaries */
+      --ink-black: #171717;
+      --ink-muted: #66615A;
+      --border-bold: #242424;
+      --border-subtle: #D2CBBE;
+      
+      /* Bauhaus & Signal Brand Accents */
+      --signal-red: #D7263D;
+      --bauhaus-yellow: #F4B400;
+      --electric-cobalt: #1E4CA1;
+      --cobalt-hover: #153878;
+      --verified-green: #18794E;
+      
+      /* Subtle Tints for High Contrast */
+      --tint-green: #E8F5E9;
+      --tint-yellow: #FEF9C3;
+      --tint-red: #FEE2E2;
+      --tint-cobalt: #EFF6FF;
+
+      /* Neo-Brutalist Hard Shadows */
+      --shadow-sm: 2px 2px 0px var(--ink-black);
+      --shadow-md: 3px 3px 0px var(--ink-black);
+      --shadow-focus: 2px 2px 0px var(--electric-cobalt);
+    }
+
+    /* Base Reset & Typography */
+    *, *::before, *::after {
+      box-sizing: border-box;
     }
     body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--paper-warm);
+      color: var(--ink-black);
+      font-family: -apple-system, BlinkMacSystemFont, "Space Grotesk", "Inter", "Segoe UI", Roboto, sans-serif;
       margin: 0;
       padding: 10px;
       font-size: 12px;
       line-height: 1.45;
+      overflow-x: hidden;
     }
+
+    /* Technical Monospace Elements */
+    code, pre, .mono, .tool-box, .hunk-list, .file-chip, select, textarea {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* ==========================================================================
+       COMMAND CENTER HEADER (Bauhaus Geometric Lockup)
+       ========================================================================== */
     .header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border-bold);
+      margin-bottom: 8px;
+    }
+    .header-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--card-border);
-      margin-bottom: 10px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
     .brand {
-      font-weight: 700;
+      font-weight: 800;
       font-size: 13px;
-      letter-spacing: 0.04em;
-      color: var(--text-bright);
+      letter-spacing: 0.05em;
+      color: var(--ink-black);
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
+      text-transform: uppercase;
+    }
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      background: var(--paper-white);
+      border: 2px solid var(--border-bold);
+      border-radius: 4px;
+      box-shadow: var(--shadow-sm);
     }
     .status-pills {
       display: flex;
-      gap: 6px;
+      gap: 5px;
       align-items: center;
+      flex-wrap: wrap;
     }
     .pill {
-      font-size: 10px;
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
       padding: 2px 7px;
-      border-radius: 10px;
-      border: 1px solid var(--card-border);
-      background: var(--card-bg);
-      display: flex;
+      border-radius: 3px;
+      border: 1.5px solid var(--border-bold);
+      background: var(--paper-white);
+      color: var(--ink-black);
+      display: inline-flex;
       align-items: center;
       gap: 4px;
+      box-shadow: 1px 1px 0px var(--border-bold);
     }
     .pill.online {
-      color: var(--lime);
-      border-color: rgba(52, 211, 153, 0.4);
+      color: var(--verified-green);
+      background: var(--tint-green);
+      border-color: var(--verified-green);
     }
     .pill.offline {
-      color: var(--crimson);
-      border-color: rgba(248, 113, 113, 0.4);
+      color: var(--signal-red);
+      background: var(--tint-red);
+      border-color: var(--signal-red);
     }
     .pill.degraded {
-      color: #f59e0b;
-      border-color: rgba(245, 158, 11, 0.4);
+      color: #92400e;
+      background: var(--tint-yellow);
+      border-color: var(--bauhaus-yellow);
     }
     .pill.model {
-      color: var(--cobalt);
-      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--electric-cobalt);
+      background: var(--tint-cobalt);
+      border-color: var(--electric-cobalt);
     }
 
-    /* Execution Step Pipeline */
+    /* Subtitle Tagline */
+    .brand-tagline {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--ink-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ==========================================================================
+       MODEL & PROVIDER CONTROL BAR
+       ========================================================================== */
+    .model-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 0 0 8px 0;
+      gap: 6px;
+      padding: 6px 8px;
+      background: var(--paper-white);
+      border-radius: 4px;
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      flex-wrap: wrap;
+    }
+    .model-label {
+      font-size: 9.5px;
+      color: var(--ink-black);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    select#modelSelect {
+      flex: 1;
+      min-width: 140px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--paper-warm);
+      color: var(--ink-black);
+      border: 1.5px solid var(--border-bold);
+      border-radius: 3px;
+      padding: 3px 6px;
+      outline: none;
+      cursor: pointer;
+    }
+    select#modelSelect:focus {
+      border-color: var(--electric-cobalt);
+      box-shadow: 0 0 0 1px var(--electric-cobalt);
+    }
+
+    /* ==========================================================================
+       EIGHT-STAGE EXECUTION PIPELINE
+       ========================================================================== */
     .step-pipeline {
       display: flex;
+      flex-wrap: wrap;
       gap: 4px;
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
+      background: var(--paper-white);
+      border: 2px solid var(--border-bold);
       padding: 6px;
-      border-radius: 6px;
-      margin-bottom: 10px;
-      overflow-x: auto;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      box-shadow: var(--shadow-sm);
     }
     .step-node {
-      font-size: 10px;
-      padding: 3px 6px;
-      border-radius: 4px;
-      background: var(--subtle-bg);
-      color: var(--text-muted);
+      flex: 1 1 calc(25% - 4px);
+      min-width: 65px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      padding: 3px 5px;
+      border-radius: 3px;
+      background: var(--paper-warm);
+      color: var(--ink-muted);
+      border: 1.5px solid var(--border-subtle);
+      text-align: center;
       white-space: nowrap;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
     }
     .step-node.active {
-      background: var(--cobalt-dark);
-      color: #ffffff;
-      font-weight: 600;
-      box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
+      background: var(--bauhaus-yellow);
+      color: var(--ink-black);
+      border-color: var(--ink-black);
+      font-weight: 800;
+      box-shadow: 1.5px 1.5px 0px var(--ink-black);
     }
     .step-node.completed {
-      background: rgba(52, 211, 153, 0.2);
-      color: var(--lime);
+      background: var(--verified-green);
+      color: #ffffff;
+      border-color: var(--border-bold);
+    }
+    .step-node.failed {
+      background: var(--signal-red);
+      color: #ffffff;
+      border-color: var(--border-bold);
     }
 
-    /* Chat / Message Stream */
+    /* ==========================================================================
+       CONVERSATION / CHAT STREAM CONTAINER
+       ========================================================================== */
     .chat-container {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 280px;
+      max-height: 290px;
       overflow-y: auto;
-      margin-bottom: 10px;
-      padding-right: 4px;
+      margin-bottom: 8px;
+      padding-right: 2px;
     }
     .message {
-      padding: 8px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      border: 1px solid var(--card-border);
+      padding: 9px 11px;
+      border-radius: 4px;
+      font-size: 11.5px;
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      word-wrap: break-word;
     }
     .message.user {
-      background: #172554;
-      border-color: #1e3a8a;
-      color: #e0f2fe;
+      background: var(--tint-cobalt);
+      border-color: var(--electric-cobalt);
+      color: var(--ink-black);
     }
     .message.assistant {
-      background: var(--card-bg);
-      border-color: var(--card-border);
+      background: var(--paper-white);
+      border-color: var(--border-bold);
+      color: var(--ink-black);
     }
+    .message-tag {
+      font-size: 9.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: inline-block;
+      margin-bottom: 4px;
+    }
+    .message.user .message-tag { color: var(--electric-cobalt); }
+    .message.assistant .message-tag { color: var(--ink-black); }
+
+    /* Tool Call Cards */
     .tool-box {
-      background: #020617;
-      border: 1px solid #1e293b;
-      padding: 6px 8px;
+      background: var(--paper-secondary);
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      padding: 7px 9px;
       border-radius: 4px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-      color: #7dd3fc;
+      font-size: 10.5px;
+      color: var(--ink-black);
+      margin-top: 2px;
+      word-break: break-all;
     }
+    .tool-box strong {
+      color: var(--electric-cobalt);
+    }
+
+    /* Context Auction Receipt Box */
     .receipt-box {
-      background: #1e1b4b;
-      border: 1px solid #312e81;
-      padding: 8px 10px;
-      border-radius: 6px;
+      background: var(--paper-white);
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-md);
+      padding: 9px 11px;
+      border-radius: 4px;
       font-size: 11px;
+      margin: 4px 0;
     }
     .receipt-title {
-      font-weight: 600;
-      color: var(--amber);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-black);
       display: flex;
       justify-content: space-between;
       margin-bottom: 4px;
+      font-size: 10px;
     }
     .token-meter {
-      height: 4px;
-      background: #374151;
+      height: 6px;
+      background: var(--paper-neutral);
+      border: 1.5px solid var(--border-bold);
       border-radius: 2px;
       margin: 4px 0 6px 0;
       overflow: hidden;
     }
     .token-meter-fill {
       height: 100%;
-      background: var(--amber);
+      background: var(--bauhaus-yellow);
       width: 0%;
       transition: width 0.3s ease;
     }
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px 8px;
+      font-size: 10px;
+      color: var(--ink-black);
+      margin: 6px 0;
+      padding: 6px 8px;
+      background: var(--paper-warm);
+      border: 1.5px solid var(--border-bold);
+      border-radius: 3px;
+    }
 
-    /* Staged Patches */
+    /* ==========================================================================
+       SURGICAL STAGED PATCHES
+       ========================================================================== */
     .staged-patch {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 6px;
+      background: var(--paper-white);
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-md);
+      border-radius: 4px;
       padding: 10px;
       margin-bottom: 8px;
     }
@@ -759,190 +936,336 @@ Always explain the purpose, rationale, and expected impact of any changes before
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     .file-chip {
-      font-weight: 600;
-      color: var(--text-bright);
-      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-weight: 700;
+      color: var(--electric-cobalt);
       font-size: 11px;
+      word-break: break-all;
     }
     .badge {
       font-size: 9px;
-      padding: 2px 6px;
-      border-radius: 4px;
+      font-weight: 800;
       text-transform: uppercase;
-      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 2px 6px;
+      border-radius: 3px;
+      border: 1.5px solid var(--border-bold);
+      white-space: nowrap;
     }
-    .badge.staged { background: #854d0e; color: #fef08a; }
-    .badge.applied { background: #065f46; color: #a7f3d0; }
-    .badge.rejected { background: #991b1b; color: #fecaca; }
-    .badge.risk-low { background: #14532d; color: #86efac; }
-    .badge.risk-medium { background: #713f12; color: #fde047; }
-    .badge.risk-high { background: #7f1d1d; color: #fca5a5; }
+    .badge.staged { background: var(--tint-yellow); color: #854d0e; }
+    .badge.applied { background: var(--tint-green); color: var(--verified-green); }
+    .badge.rejected { background: var(--tint-red); color: var(--signal-red); }
+    .badge.risk-low { background: var(--tint-green); color: var(--verified-green); }
+    .badge.risk-medium { background: var(--tint-yellow); color: #854d0e; }
+    .badge.risk-high { background: var(--tint-red); color: var(--signal-red); }
 
     .patch-purpose {
       font-size: 11px;
-      color: var(--text-muted);
+      color: var(--ink-muted);
       margin-bottom: 8px;
+      line-height: 1.4;
     }
     .hunk-list {
       margin: 6px 0 8px 0;
-      padding: 4px;
-      background: #090d13;
-      border-radius: 4px;
-      font-family: ui-monospace, SFMono-Regular, monospace;
+      padding: 5px 7px;
+      background: var(--paper-warm);
+      border: 1.5px solid var(--border-bold);
+      border-radius: 3px;
       font-size: 10px;
     }
     .hunk-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 2px 4px;
+      padding: 3px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .hunk-row:last-child {
+      border-bottom: none;
     }
 
-    /* Proof of Change Report */
+    /* ==========================================================================
+       PROOF-CARRYING CODE REPORT CARD
+       ========================================================================== */
     .proof-card {
-      background: #022c22;
-      border: 1px solid #059669;
-      padding: 10px;
-      border-radius: 6px;
-      margin: 10px 0;
+      background: var(--paper-white);
+      border: 2px solid var(--verified-green);
+      box-shadow: 3px 3px 0px var(--verified-green);
+      padding: 10px 12px;
+      border-radius: 4px;
+      margin: 8px 0;
       font-size: 11px;
     }
     .proof-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-weight: 700;
-      color: #6ee7b7;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--verified-green);
       margin-bottom: 6px;
+      flex-wrap: wrap;
+      gap: 4px;
     }
     .test-result-row {
       display: flex;
       justify-content: space-between;
-      padding: 2px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 3px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .test-result-row:last-child {
+      border-bottom: none;
     }
 
-    /* Quick Prompts / Empty State */
+    /* ==========================================================================
+       QUICK PROMPTS / BENCHMARK CHIPS
+       ========================================================================== */
     .quick-prompts {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
       margin-top: 8px;
     }
     .quick-chip {
-      background: var(--subtle-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 4px;
+      background: var(--paper-secondary);
+      border: 1.5px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      border-radius: 3px;
       padding: 6px 8px;
-      color: var(--cobalt);
+      color: var(--ink-black);
       font-size: 11px;
       cursor: pointer;
       text-align: left;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
     }
     .quick-chip:hover {
-      background: #28303a;
-      border-color: var(--cobalt);
+      background: var(--paper-white);
+      transform: translate(-1px, -1px);
+      box-shadow: var(--shadow-md);
+    }
+    .quick-chip:active {
+      transform: translate(2px, 2px);
+      box-shadow: 0px 0px 0px;
     }
 
-    /* Buttons */
+    /* ==========================================================================
+       BUTTON SYSTEM (Neo-Brutalist Tactile Buttons)
+       ========================================================================== */
     .btn-group {
       display: flex;
       gap: 6px;
+      flex-wrap: wrap;
     }
     button {
-      background: var(--cobalt-dark);
+      background: var(--electric-cobalt);
       color: #ffffff;
-      border: none;
-      padding: 5px 10px;
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      padding: 6px 12px;
       border-radius: 4px;
       cursor: pointer;
       font-size: 11px;
-      font-weight: 600;
-      transition: background 0.15s ease;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
     }
-    button:hover { background: #0369a1; }
-    button.secondary { background: #374151; }
-    button.secondary:hover { background: #4b5563; }
-    button.danger { background: #991b1b; }
-    button.danger:hover { background: #b91c1c; }
-    button.success { background: #065f46; }
-    button.success:hover { background: #047857; }
-    button.tiny { padding: 2px 6px; font-size: 9px; }
+    button:hover:not(:disabled) {
+      background: var(--cobalt-hover);
+      transform: translate(-1px, -1px);
+      box-shadow: var(--shadow-md);
+    }
+    button:active:not(:disabled) {
+      transform: translate(2px, 2px);
+      box-shadow: 0px 0px 0px;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: var(--shadow-sm) !important;
+    }
 
-    /* Input */
+    button.secondary {
+      background: var(--paper-secondary);
+      color: var(--ink-black);
+    }
+    button.secondary:hover:not(:disabled) {
+      background: var(--paper-white);
+    }
+
+    button.danger {
+      background: var(--signal-red);
+      color: #ffffff;
+    }
+    button.danger:hover:not(:disabled) {
+      background: #b91c1c;
+    }
+
+    button.success {
+      background: var(--verified-green);
+      color: #ffffff;
+    }
+    button.success:hover:not(:disabled) {
+      background: #14532d;
+    }
+
+    button.tiny {
+      padding: 2px 7px;
+      font-size: 9.5px;
+      box-shadow: 1px 1px 0px var(--border-bold);
+    }
+
+    /* Hero Send Button */
+    button#sendBtn {
+      background: var(--electric-cobalt);
+      box-shadow: var(--shadow-md);
+      font-size: 11.5px;
+      padding: 7px 14px;
+    }
+
+    /* ==========================================================================
+       COMMAND INPUT AREA
+       ========================================================================== */
     .input-area {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      margin-top: 8px;
+      margin-top: 6px;
     }
-    textarea {
+    textarea#promptInput {
       width: 100%;
-      box-sizing: border-box;
-      background: var(--card-bg);
-      color: var(--text-bright);
-      border: 1px solid var(--card-border);
-      border-radius: 6px;
-      padding: 8px;
-      font-size: 12px;
+      background: var(--paper-white);
+      color: var(--ink-black);
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 11.5px;
       resize: vertical;
-      min-height: 55px;
-      font-family: inherit;
-    }
-    textarea:focus {
+      min-height: 60px;
+      line-height: 1.4;
       outline: none;
-      border-color: var(--cobalt);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    textarea#promptInput:focus {
+      border-color: var(--electric-cobalt);
+      box-shadow: var(--shadow-focus);
     }
     .actions {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       RESPONSIVE ADAPTATIONS (Down to 320px)
+       ========================================================================== */
+    @media (max-width: 360px) {
+      body {
+        padding: 6px;
+      }
+      .brand {
+        font-size: 11.5px;
+      }
+      .step-node {
+        flex: 1 1 calc(50% - 4px);
+        font-size: 8.5px;
+        padding: 3px 2px;
+      }
+      .model-bar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      select#modelSelect {
+        width: 100%;
+      }
+      .actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .actions .btn-group {
+        width: 100%;
+      }
+      .actions button {
+        width: 100%;
+      }
+    }
+
+    /* Reduced Motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+        transform: none !important;
+      }
     }
   </style>
 </head>
 <body>
+  <!-- BAUHAUS PRODUCT HEADER -->
   <div class="header">
-    <div class="brand">
-      <span>🛡️</span> FORGE//SENTINEL
+    <div class="header-top">
+      <div class="brand">
+        <span class="brand-mark" title="FORGE//SENTINEL Bauhaus Emblem">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+            <rect x="2" y="3" width="8" height="8" rx="1" fill="#D7263D" stroke="#171717" stroke-width="1.8"/>
+            <circle cx="17" cy="7" r="4" fill="#1E4CA1" stroke="#171717" stroke-width="1.8"/>
+            <polygon points="12,13 4,21 20,21" fill="#F4B400" stroke="#171717" stroke-width="1.8" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        FORGE//SENTINEL
+      </div>
+      <div class="status-pills">
+        <div id="statusBadge" class="pill offline">Daemon: Offline</div>
+        <div id="modelPill" class="pill model">Model: Ready</div>
+      </div>
     </div>
-    <div class="status-pills">
-      <div id="statusBadge" class="pill offline">Daemon: Offline</div>
-      <div id="modelPill" class="pill model">Model: Ready</div>
-    </div>
+    <div class="brand-tagline">Understand First • Plan Intelligently • Change Precisely • Prove Everything</div>
   </div>
 
-  <!-- Provider & Model Selector Control Bar -->
-  <div class="model-bar" style="display:flex; justify-content:space-between; align-items:center; margin:6px 0 8px 0; gap:6px; padding:4px 8px; background:rgba(0,0,0,0.2); border-radius:6px; border:1px solid var(--card-border);">
+  <!-- PROVIDER & MODEL SELECTOR CONTROL BAR -->
+  <div class="model-bar">
     <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0;">
-      <span style="font-size:10px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Active Model:</span>
-      <select id="modelSelect" style="flex:1; font-size:11px; background:var(--card-bg); color:var(--text-bright); border:1px solid var(--card-border); border-radius:4px; padding:3px 6px; outline:none; text-overflow:ellipsis;">
+      <span class="model-label">Active Model:</span>
+      <select id="modelSelect">
         <option value="">Resolving available models...</option>
       </select>
     </div>
-    <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap; padding:3px 8px;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
+    <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
   </div>
 
-  <!-- Live Execution Step Pipeline -->
+  <!-- EIGHT-STAGE EXECUTION PIPELINE -->
   <div class="step-pipeline" id="stepPipeline">
-    <div class="step-node active" id="step-idle">1. Idle</div>
-    <div class="step-node" id="step-understanding">2. Understand</div>
-    <div class="step-node" id="step-retrieving">3. Auction</div>
-    <div class="step-node" id="step-searching">4. MRI</div>
-    <div class="step-node" id="step-planning">5. Plan</div>
-    <div class="step-node" id="step-staging">6. Stage</div>
-    <div class="step-node" id="step-testing">7. Test</div>
-    <div class="step-node" id="step-completed" style="display: none;">8. Completed</div>
-    <div class="step-node" id="step-proven">8. Proven</div>
+    <div class="step-node active" id="step-idle">01. Idle</div>
+    <div class="step-node" id="step-understanding">02. Understand</div>
+    <div class="step-node" id="step-retrieving">03. Auction</div>
+    <div class="step-node" id="step-searching">04. MRI</div>
+    <div class="step-node" id="step-planning">05. Plan</div>
+    <div class="step-node" id="step-staging">06. Stage</div>
+    <div class="step-node" id="step-testing">07. Test</div>
+    <div class="step-node" id="step-completed" style="display: none;">08. Done</div>
+    <div class="step-node" id="step-proven">08. Proven</div>
     <div class="step-node" id="step-failed" style="display: none;">Failed</div>
     <div class="step-node" id="step-cancelled" style="display: none;">Cancelled</div>
   </div>
 
+  <!-- CHAT / MESSAGE STREAM -->
   <div id="chat" class="chat-container">
     <div class="message assistant">
-      <strong>Sentinel Command Center:</strong> Ready. Codebase MRI, Context Auction, Surgical Patch Staging, and Proof-Carrying Code active.
+      <div class="message-tag">Sentinel Command Center</div>
+      <div>Ready. Codebase MRI, Context Auction, Surgical Patch Staging, and Proof-Carrying Code active.</div>
       <div class="quick-prompts">
         <div class="quick-chip" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
           ⚡ <strong>Task B:</strong> Add built-in "flask config" command with recursive masking
@@ -957,6 +1280,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
   <div id="stagedContainer"></div>
   <div id="proofContainer"></div>
 
+  <!-- COMMAND INPUT & ACTIONS -->
   <div class="input-area">
     <textarea id="promptInput" placeholder="Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision."></textarea>
     <div class="actions">
@@ -1066,7 +1390,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
           cancelBtn.style.display = 'inline-block';
           currentStreamingElem = document.createElement('div');
           currentStreamingElem.className = 'message assistant';
-          currentStreamingElem.innerHTML = '<strong>Sentinel Agent:</strong> <span class="stream-body"></span>';
+          currentStreamingElem.innerHTML = '<div class="message-tag">Sentinel Agent</div><div class="stream-body"></div>';
           chat.appendChild(currentStreamingElem);
           chat.scrollTop = chat.scrollHeight;
           break;
@@ -1090,7 +1414,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'userMessage':
           const userElem = document.createElement('div');
           userElem.className = 'message user';
-          userElem.innerHTML = '<strong>Developer:</strong> ' + escapeHtml(msg.text);
+          userElem.innerHTML = '<div class="message-tag">Developer</div><div>' + escapeHtml(msg.text) + '</div>';
           chat.appendChild(userElem);
           chat.scrollTop = chat.scrollHeight;
           break;
@@ -1098,7 +1422,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'toolCall':
           const toolBox = document.createElement('div');
           toolBox.className = 'tool-box';
-          toolBox.textContent = '⚙️ [Tool Call] ' + msg.call.name + '(' + JSON.stringify(msg.call.args) + ')';
+          toolBox.innerHTML = '⚙️ <strong>[Tool Call]</strong> ' + escapeHtml(msg.call.name) + '<code>(' + escapeHtml(JSON.stringify(msg.call.args)) + ')</code>';
           chat.appendChild(toolBox);
           chat.scrollTop = chat.scrollHeight;
           break;
@@ -1117,8 +1441,9 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
         case 'log':
           const logElem = document.createElement('div');
-          logElem.style.fontSize = '11px';
-          logElem.style.color = 'var(--text-muted)';
+          logElem.style.fontSize = '10.5px';
+          logElem.style.color = 'var(--ink-muted)';
+          logElem.style.padding = '1px 4px';
           logElem.textContent = '• ' + msg.message;
           chat.appendChild(logElem);
           chat.scrollTop = chat.scrollHeight;
@@ -1127,10 +1452,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'error':
           const errElem = document.createElement('div');
           errElem.className = 'message';
-          errElem.style.background = '#450a0a';
-          errElem.style.borderColor = '#b91c1c';
-          errElem.style.color = '#fecaca';
-          errElem.innerHTML = '<strong>Error Trapped by Sentinel:</strong> ' + escapeHtml(msg.message);
+          errElem.style.background = 'var(--tint-red)';
+          errElem.style.borderColor = 'var(--signal-red)';
+          errElem.style.color = 'var(--signal-red)';
+          errElem.innerHTML = '<div class="message-tag" style="color:var(--signal-red);">Error Trapped by Sentinel</div><div>' + escapeHtml(msg.message) + '</div>';
           chat.appendChild(errElem);
           chat.scrollTop = chat.scrollHeight;
           break;
@@ -1182,26 +1507,26 @@ Always explain the purpose, rationale, and expected impact of any changes before
       const codePct = Math.min(100, Math.round((retrievedCodeTok / codeBudget) * 100));
 
       let selectedList = r.selectedFiles.map(f => 
-        '<li style="margin-bottom:2px;"><code>' + f.filePath + '</code> (' + f.estimatedTokens + ' tok, score: ' + f.score + ') - <em>' + escapeHtml(f.relevanceRationale) + '</em></li>'
+        '<li style="margin-bottom:3px;"><code>' + escapeHtml(f.filePath) + '</code> <span class="badge risk-low" style="font-size:8.5px;">' + f.estimatedTokens + ' tok</span> (score: ' + f.score + ') — <span style="color:var(--ink-muted);">' + escapeHtml(f.relevanceRationale) + '</span></li>'
       ).join('');
 
       let excludedList = r.excludedFiles.map(e =>
-        '<li><code>' + e.filePath + '</code>: ' + escapeHtml(e.exclusionReason) + '</li>'
+        '<li style="margin-bottom:2px;"><code>' + escapeHtml(e.filePath) + '</code>: ' + escapeHtml(e.exclusionReason) + '</li>'
       ).join('');
 
       const breakdownHtml =
-        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:3px 8px; font-size:10px; color:#cbd5e1; margin:4px 0 6px 0; padding:4px 6px; background:rgba(0,0,0,0.25); border-radius:4px;">' +
+        '<div class="breakdown-grid">' +
           '<span><strong>1. Retrieved Code:</strong> ' + retrievedCodeTok + ' tok</span>' +
           '<span><strong>2. Est. Complete Req:</strong> ' + estimatedReqTok + ' tok</span>' +
           '<span><strong>3. Reserved Output:</strong> ' + reservedOutTok + ' tok</span>' +
           '<span><strong>4. Safety Margin:</strong> ' + safetyMarginTok + ' tok</span>' +
-          '<span style="grid-column:span 2;"><strong>5. Total Context Capacity:</strong> ' + totalCapacityTok.toLocaleString() + ' tok (Auction Ceiling: ' + totalBudget.toLocaleString() + ' tok)</span>' +
+          '<span style="grid-column:span 2; margin-top:2px; font-weight:700;">5. Total Capacity: ' + totalCapacityTok.toLocaleString() + ' tok (Ceiling: ' + totalBudget.toLocaleString() + ' tok)</span>' +
         '</div>';
 
       receiptBox.innerHTML = 
         '<div class="receipt-title">' +
           '<span>📋 Context Selection Receipt</span>' +
-          '<span>' + retrievedCodeTok + ' / ' + codeBudget + ' code tok (' + codePct + '%)</span>' +
+          '<span style="color:var(--electric-cobalt);">' + retrievedCodeTok + ' / ' + codeBudget + ' code tok (' + codePct + '%)</span>' +
         '</div>' +
         '<div class="token-meter"><div class="token-meter-fill" style="width:' + codePct + '%;"></div></div>' +
         breakdownHtml +
@@ -1209,8 +1534,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
           '<ul style="margin:4px 0; padding-left:16px;">' + selectedList + '</ul>' +
         '</details>' +
         (r.excludedFiles.length > 0 ? 
-          '<details style="cursor:pointer; margin-top:4px;"><summary style="color:var(--text-muted);">' + r.excludedFiles.length + ' Excluded Candidates</summary>' +
-            '<ul style="margin:4px 0; padding-left:16px; color:var(--text-muted);">' + excludedList + '</ul>' +
+          '<details style="cursor:pointer; margin-top:4px;"><summary style="color:var(--ink-muted);">' + r.excludedFiles.length + ' Excluded Candidates</summary>' +
+            '<ul style="margin:4px 0; padding-left:16px; color:var(--ink-muted);">' + excludedList + '</ul>' +
           '</details>' : '');
 
       chat.appendChild(receiptBox);
@@ -1222,9 +1547,12 @@ Always explain the purpose, rationale, and expected impact of any changes before
       if (!patches || patches.length === 0) return;
 
       const title = document.createElement('div');
-      title.style.fontWeight = '600';
+      title.style.fontWeight = '800';
+      title.style.fontSize = '11px';
+      title.style.textTransform = 'uppercase';
+      title.style.letterSpacing = '0.04em';
       title.style.margin = '10px 0 6px 0';
-      title.style.color = 'var(--text-bright)';
+      title.style.color = 'var(--ink-black)';
       title.textContent = 'Proposed Surgical Patches (' + patches.length + ')';
       stagedContainer.appendChild(title);
 
@@ -1241,8 +1569,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
           p.hunks.forEach((h, idx) => {
             const checked = h.accepted !== false ? 'checked' : '';
             hunkMarkup += '<div class="hunk-row">' +
-              '<span>' + h.header + '</span>' +
-              '<label style="cursor:pointer;"><input type="checkbox" class="hunk-toggle" data-patch="' + p.patchId + '" data-hunk="' + h.hunkId + '" ' + checked + '> Include</label>' +
+              '<span>' + escapeHtml(h.header) + '</span>' +
+              '<label style="cursor:pointer; font-weight:700;"><input type="checkbox" class="hunk-toggle" data-patch="' + p.patchId + '" data-hunk="' + h.hunkId + '" ' + checked + '> Include</label>' +
             '</div>';
           });
           hunkMarkup += '</div>';
@@ -1250,7 +1578,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
         item.innerHTML = 
           '<div class="patch-header">' +
-            '<span class="file-chip">' + p.filePath + '</span>' +
+            '<span class="file-chip">' + escapeHtml(p.filePath) + '</span>' +
             '<div style="display:flex; gap:4px;">' +
               '<span class="' + riskClass + '">' + (p.riskLevel || 'low') + ' risk</span>' +
               '<span class="' + statusClass + '">' + p.status + '</span>' +
@@ -1311,27 +1639,27 @@ Always explain the purpose, rationale, and expected impact of any changes before
       const box = document.createElement('div');
       box.className = 'proof-card';
 
-      let badgeStyle = 'background:#064e3b; color:#a7f3d0; border:1px solid #10b981;';
+      let badgeStyle = 'background:var(--tint-green); color:var(--verified-green); border-color:var(--verified-green);';
       if (report.status === 'read_only_completed') {
-        badgeStyle = 'background:#0c4a6e; color:#bae6fd; border:1px solid #0284c7;';
+        badgeStyle = 'background:var(--tint-cobalt); color:var(--electric-cobalt); border-color:var(--electric-cobalt);';
       } else if (report.status === 'failed') {
-        badgeStyle = 'background:#450a0a; color:#fecaca; border:1px solid #ef4444;';
+        badgeStyle = 'background:var(--tint-red); color:var(--signal-red); border-color:var(--signal-red);';
       } else if (report.status === 'partial') {
-        badgeStyle = 'background:#451a03; color:#fde68a; border:1px solid #d97706;';
+        badgeStyle = 'background:var(--tint-yellow); color:#854d0e; border-color:var(--bauhaus-yellow);';
       } else if (report.status === 'unverified') {
-        badgeStyle = 'background:#1f2937; color:#9ca3af; border:1px solid #4b5563;';
+        badgeStyle = 'background:var(--paper-neutral); color:var(--ink-muted); border-color:var(--border-bold);';
       }
 
       let testRows = '';
       if (report.status === 'read_only_completed') {
-        testRows = '<div style="color:#7dd3fc;">✓ Read-only architecture inquiry (test suite execution not required).</div>';
+        testRows = '<div style="color:var(--electric-cobalt); font-weight:600;">✓ Read-only architecture inquiry (test suite execution not required).</div>';
       } else if (report.testResults && report.testResults.length > 0) {
         testRows = report.testResults.map(r => {
-          const color = r.status === 'passed' ? '#34d399' : (r.status === 'failed' ? '#f87171' : '#fbbf24');
+          const color = r.status === 'passed' ? 'var(--verified-green)' : (r.status === 'failed' ? 'var(--signal-red)' : 'var(--bauhaus-yellow)');
           return '<div class="test-result-row"><span>' + escapeHtml(r.testName) + '</span><strong style="color:' + color + ';">' + r.status.toUpperCase() + '</strong></div>';
         }).join('');
       } else {
-        testRows = '<div style="color:#9ca3af;">No test executions recorded.</div>';
+        testRows = '<div style="color:var(--ink-muted);">No test executions recorded.</div>';
       }
 
       const displayStatus = report.status === 'read_only_completed' ? 'READ-ONLY COMPLETED' : report.status.toUpperCase();
@@ -1343,10 +1671,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
         '</div>' +
         '<div style="margin-bottom:6px;"><strong>Modified Files (' + report.filesModified.length + '):</strong> ' + (report.filesModified.join(', ') || 'None') + '</div>' +
         '<div style="margin-bottom:6px;"><strong>Patches:</strong> ' + report.patchesAccepted + ' accepted / ' + report.patchesProposed + ' proposed</div>' +
-        '<div style="font-weight:600; margin-top:8px; margin-bottom:4px;">Verification Results:</div>' +
-        '<div style="background:rgba(0,0,0,0.2); padding:6px; border-radius:4px;">' + testRows + '</div>' +
+        '<div style="font-weight:700; margin-top:8px; margin-bottom:4px; text-transform:uppercase; font-size:10px;">Verification Results:</div>' +
+        '<div style="background:var(--paper-warm); border:1px solid var(--border-subtle); padding:6px 8px; border-radius:3px;">' + testRows + '</div>' +
         (report.remainingRisks && report.remainingRisks.length > 0 ? 
-          '<div style="margin-top:6px; color:#fde68a;">⚠️ <strong>Advisory:</strong> ' + escapeHtml(report.remainingRisks.join('; ')) + '</div>' : '');
+          '<div style="margin-top:6px; color:#854d0e; background:var(--tint-yellow); border:1px solid var(--bauhaus-yellow); padding:5px 7px; border-radius:3px;">⚠️ <strong>Advisory:</strong> ' + escapeHtml(report.remainingRisks.join('; ')) + '</div>' : '');
 
       proofContainer.appendChild(box);
     }

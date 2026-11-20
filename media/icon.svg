@@ -1,5 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-  <path d="M9 12l2 2 4-4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <!-- Bauhaus Geometric Trinity: Square, Circle, Triangle -->
+  <!-- Square (Signal Red) -->
+  <rect x="2" y="3" width="9" height="9" rx="1.5" fill="#D7263D" stroke="#171717" stroke-width="1.8"/>
+  <!-- Circle (Electric Cobalt) -->
+  <circle cx="17.5" cy="7.5" r="4.5" fill="#1E4CA1" stroke="#171717" stroke-width="1.8"/>
+  <!-- Triangle (Bauhaus Yellow) -->
+  <polygon points="12,13 3.5,21.5 20.5,21.5" fill="#F4B400" stroke="#171717" stroke-width="1.8" stroke-linejoin="round"/>
 </svg>
-

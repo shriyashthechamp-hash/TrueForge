@@ -662,7 +662,7 @@ export class SentinelMcpServer {
         return;
       }
 
-      if (parsedUrl.pathname === '/healthz' && req.method === 'GET') {
+      if ((parsedUrl.pathname === '/healthz' || parsedUrl.pathname === '/health') && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', server: 'forge-sentinel-mcp' }));
         return;

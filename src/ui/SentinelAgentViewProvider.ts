@@ -2221,6 +2221,9 @@ Always explain the purpose, rationale, and expected impact of any changes before
         });
       });
     }
+
+    // Request immediate connection status once webview DOM and event listeners are active
+    vscode.postMessage({ command: 'refreshStatus' });
   </script>
 </body>
 </html>`;

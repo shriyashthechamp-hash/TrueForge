@@ -29,7 +29,11 @@ describe('OpenRouter Provider Integration & Multi-Turn Verification', () => {
     await mri.scan();
     auction = new ContextAuction(tempDir, mri, 4000);
     mcpServer = new SentinelMcpServer(tempDir, patchManager, mri, auction, 9099);
-    await mcpServer.start();
+    try {
+      await mcpServer.start();
+    } catch (err: any) {
+      if (!err.message?.includes('already in use')) throw err;
+    }
 
     client = new TrueForgeHarnessClient('http://localhost:8790', 'trueforge-standalone');
     await client.registerSentinelMcpServer(mcpServer.getSseUrl());

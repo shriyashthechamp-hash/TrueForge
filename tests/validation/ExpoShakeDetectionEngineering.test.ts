@@ -23,7 +23,11 @@ describe('Real Repository Engineering Test: Expo Shake Detection', () => {
     await mri.scan();
     auction = new ContextAuction(expoProjectRoot, mri, 16000);
     mcpServer = new SentinelMcpServer(expoProjectRoot, patchManager, mri, auction, 9099);
-    await mcpServer.start();
+    try {
+      await mcpServer.start();
+    } catch (err: any) {
+      if (!err.message?.includes('already in use')) throw err;
+    }
 
     flightRecorder = new FlightRecorder();
     client = new TrueForgeHarnessClient('http://localhost:8790', 'trueforge-standalone');

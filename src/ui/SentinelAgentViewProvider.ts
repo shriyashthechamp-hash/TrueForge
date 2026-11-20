@@ -58,19 +58,12 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
 
-    if (this.connectionManager && !this.connectionManager.getLastStatus()) {
-      try {
-        await this.connectionManager.checkStatus();
-      } catch (err) {
-        logRuntime(`Initial checkStatus notice: ${err}`);
-      }
-    }
-
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-
+    // Attach message listener BEFORE setting HTML to prevent early message dropping
     webviewView.webview.onDidReceiveMessage(async (message) => {
+      logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
       switch (message.command) {
         case 'submitPrompt': {
+          logRuntime(`submitPrompt received. text length=${message.text?.length}`);
           await this.handleUserPrompt(message.text);
           break;
         }
@@ -121,6 +114,10 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
           await this.handleOpenApiKeyConfig();
           break;
         }
+        case 'clientError': {
+          logRuntime(`Webview reported client error: ${message.error}`);
+          break;
+        }
       }
     });
 
@@ -129,7 +126,14 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
         logRuntime(`connectionManager.onStatusChange callback fired: connected=${status.connected}`);
         this.postStatusUpdate(status);
       });
+      try {
+        await this.connectionManager.checkStatus();
+      } catch (err) {
+        logRuntime(`Initial checkStatus notice: ${err}`);
+      }
     }
+
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
     this.updateConnectionStatus();
   }
@@ -635,7 +639,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-inline' 'unsafe-eval'; font-src ${webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval' ${webview.cspSource}; style-src * 'unsafe-inline' ${webview.cspSource}; connect-src *;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
@@ -1542,7 +1546,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         ${initialModelOptions}
       </select>
     </div>
-    <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
+    <button id="configKeysBtn" class="tiny secondary" onclick="sentinelConfigKeys()" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
   </div>
 
   <!-- EIGHT-STAGE EXECUTION PIPELINE -->
@@ -1566,10 +1570,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
       <div class="message-tag">Sentinel Command Center</div>
       <div>Ready. Codebase MRI, Context Auction, Surgical Patch Staging, and Proof-Carrying Code active.</div>
       <div class="quick-prompts">
-        <div class="quick-chip" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
+        <div class="quick-chip" onclick="sentinelQuickTask(this)" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
           ⚡ <strong>Task B:</strong> Add built-in "flask config" command with recursive masking
         </div>
-        <div class="quick-chip" data-prompt="In src/flask/helpers.py, treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value treated as false.">
+        <div class="quick-chip" onclick="sentinelQuickTask(this)" data-prompt="In src/flask/helpers.py, treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value treated as false.">
           ⚡ <strong>Task A:</strong> Inline edit on get_debug_flag ('off' and 'n')
         </div>
       </div>
@@ -1584,21 +1588,83 @@ Always explain the purpose, rationale, and expected impact of any changes before
     <textarea id="promptInput" placeholder="Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision."></textarea>
     <div class="actions">
       <div class="btn-group">
-        <button id="scanBtn" class="secondary" title="Run Codebase MRI structural scan">Scan MRI</button>
-        <button id="cancelBtn" class="danger" style="display: none;">Cancel Turn</button>
+        <button id="scanBtn" class="secondary" onclick="sentinelScanWorkspace()" title="Run Codebase MRI structural scan">Scan MRI</button>
+        <button id="cancelBtn" class="danger" onclick="sentinelCancelTurn()" style="display: none;">Cancel Turn</button>
       </div>
-      <button id="sendBtn">Execute Turn</button>
+      <button id="sendBtn" onclick="sentinelSubmitTurn()">Execute Turn</button>
     </div>
   </div>
 
   <script nonce="${nonce}">
     let vscode;
-    try {
-      vscode = acquireVsCodeApi();
-    } catch (e) {
+    if (window._vscodeApi) {
       vscode = window._vscodeApi;
+    } else {
+      try {
+        if (typeof acquireVsCodeApi === 'function') {
+          vscode = acquireVsCodeApi();
+          window._vscodeApi = vscode;
+        }
+      } catch (e) {
+        vscode = window._vscodeApi;
+      }
     }
-    window._vscodeApi = vscode;
+    window.vscode = vscode;
+
+    function sentinelPostMessage(payload) {
+      try {
+        if (vscode && typeof vscode.postMessage === 'function') {
+          vscode.postMessage(payload);
+          return true;
+        } else if (window._vscodeApi && typeof window._vscodeApi.postMessage === 'function') {
+          window._vscodeApi.postMessage(payload);
+          return true;
+        } else {
+          console.error('Sentinel: vscode API not ready to send:', payload);
+          return false;
+        }
+      } catch (err) {
+        console.error('Sentinel: error in postMessage:', err);
+        return false;
+      }
+    }
+
+    window.sentinelSubmitTurn = function() {
+      const pInput = document.getElementById('promptInput');
+      if (!pInput) return;
+      const text = pInput.value.trim();
+      if (!text) return;
+      pInput.value = '';
+      sentinelPostMessage({ command: 'submitPrompt', text: text });
+    };
+
+    window.sentinelQuickTask = function(chip) {
+      const p = chip ? chip.getAttribute('data-prompt') : null;
+      if (p) {
+        const pInput = document.getElementById('promptInput');
+        if (pInput) pInput.value = p;
+        window.sentinelSubmitTurn();
+      }
+    };
+
+    window.sentinelScanWorkspace = function() {
+      sentinelPostMessage({ command: 'scanWorkspace' });
+    };
+
+    window.sentinelCancelTurn = function() {
+      sentinelPostMessage({ command: 'cancelTurn' });
+    };
+
+    window.sentinelConfigKeys = function() {
+      sentinelPostMessage({ command: 'openApiKeyConfig' });
+    };
+
+    window.onerror = function(msg, url, line, col, err) {
+      try {
+        sentinelPostMessage({ command: 'clientError', error: String(msg) + ' at ' + line + ':' + col });
+      } catch (e) {}
+    };
+
     const chat = document.getElementById('chat');
     const promptInput = document.getElementById('promptInput');
     const sendBtn = document.getElementById('sendBtn');
@@ -1615,38 +1681,38 @@ Always explain the purpose, rationale, and expected impact of any changes before
     let currentStreamingElem = null;
     let streamBuffer = '';
 
+    promptInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        window.sentinelSubmitTurn();
+      }
+    });
+
     modelSelect?.addEventListener('change', () => {
       if (modelSelect.value) {
-        vscode.postMessage({ command: 'selectModel', modelName: modelSelect.value });
+        sentinelPostMessage({ command: 'selectModel', modelName: modelSelect.value });
       }
     });
 
     configKeysBtn?.addEventListener('click', () => {
-      vscode.postMessage({ command: 'openApiKeyConfig' });
+      window.sentinelConfigKeys();
     });
 
-    sendBtn.addEventListener('click', () => {
-      const text = promptInput.value.trim();
-      if (!text) return;
-      promptInput.value = '';
-      vscode.postMessage({ command: 'submitPrompt', text });
+    sendBtn?.addEventListener('click', () => {
+      window.sentinelSubmitTurn();
     });
 
-    cancelBtn.addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancelTurn' });
+    cancelBtn?.addEventListener('click', () => {
+      window.sentinelCancelTurn();
     });
 
-    scanBtn.addEventListener('click', () => {
-      vscode.postMessage({ command: 'scanWorkspace' });
+    scanBtn?.addEventListener('click', () => {
+      window.sentinelScanWorkspace();
     });
 
     document.querySelectorAll('.quick-chip').forEach(el => {
       el.addEventListener('click', () => {
-        const p = el.getAttribute('data-prompt');
-        if (p) {
-          promptInput.value = p;
-          sendBtn.click();
-        }
+        window.sentinelQuickTask(el);
       });
     });
 
@@ -2294,9 +2360,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     // Multi-tier handshake: ensure immediate request and bounded retries in case frame was initializing
     function requestStatus() {
-      try {
-        vscode?.postMessage({ command: 'refreshStatus' });
-      } catch (e) {}
+      sentinelPostMessage({ command: 'refreshStatus' });
     }
     requestStatus();
     setTimeout(requestStatus, 300);

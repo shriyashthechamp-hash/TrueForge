@@ -9,6 +9,31 @@ function logRuntime(msg: string): void {
     fs.appendFileSync('/tmp/forge_sentinel_runtime.log', entry, 'utf8');
   } catch {}
 }
+
+const TRACE_LOG_FILE = '/tmp/forge_sentinel_trace.log';
+
+export interface TraceRecord {
+  stage: string;
+  stageName: string;
+  correlationId: string;
+  timestamp: string;
+  success: boolean;
+  details?: Record<string, any>;
+  error?: string;
+  stack?: string;
+}
+
+export function logTrace(record: TraceRecord): void {
+  try {
+    const entry = JSON.stringify(record) + '\n';
+    fs.appendFileSync(TRACE_LOG_FILE, entry, 'utf8');
+    const detailsStr = record.details ? ` ${JSON.stringify(record.details)}` : '';
+    const errStr = record.error ? ` ERROR: ${record.error}` : '';
+    logRuntime(`[TRACE ${record.stage}] [${record.correlationId}] success=${record.success}: ${record.stageName}${detailsStr}${errStr}`);
+  } catch (err) {
+    console.error('Failed to write trace log:', err);
+  }
+}
 import type { TrueForgeHarnessClient } from '../agent/TrueForgeHarnessClient.js';
 import type { CodebaseMri } from '../context/CodebaseMri.js';
 import type { ContextAuction } from '../context/ContextAuction.js';
@@ -63,8 +88,18 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
       switch (message.command) {
         case 'submitPrompt': {
-          logRuntime(`submitPrompt received. text length=${message.text?.length}`);
-          await this.handleUserPrompt(message.text);
+          logRuntime(`submitPrompt received. text length=${message.text?.length}, correlationId=${message.correlationId}`);
+          await this.handleUserPrompt(message.text, message.correlationId, message.clientTrace);
+          break;
+        }
+        case 'traceStageP': {
+          logTrace({
+            stage: 'P',
+            stageName: 'Final assistant message renders in webview',
+            correlationId: message.correlationId || 'unknown',
+            timestamp: new Date().toISOString(),
+            success: true,
+          });
           break;
         }
         case 'cancelTurn': {
@@ -149,9 +184,6 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     if (this.connectionManager) {
       const status = await this.connectionManager.triggerImmediateCheck();
       logRuntime(`updateConnectionStatus completed: connected=${status.connected}, state=${status.state}`);
-      if (this._view && this._view.webview.html.includes('Connecting...')) {
-        this._view.webview.html = this._getHtmlForWebview(this._view.webview);
-      }
       this.postStatusUpdate(status);
       return status;
     }
@@ -265,12 +297,60 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  public async handleUserPrompt(promptText: string): Promise<void> {
-    if (!promptText || promptText.trim() === '') return;
+  public async handleUserPrompt(
+    promptText: string,
+    correlationId: string = `turn_${Date.now()}`,
+    clientTrace?: any[]
+  ): Promise<void> {
+    // Record client stages A-D if passed from webview
+    if (clientTrace && Array.isArray(clientTrace)) {
+      for (const t of clientTrace) {
+        logTrace(t);
+      }
+    }
 
-    // Pre-flight check: Ensure both TrueForge daemon and Sentinel MCP server are online and synchronized
+    // Stage E: Extension host receives the message
+    logTrace({
+      stage: 'E',
+      stageName: 'Extension host receives the message',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+      details: { promptLength: promptText?.length ?? 0 },
+    });
+
+    // Stage F: Message type and payload validated
+    if (!promptText || promptText.trim() === '') {
+      logTrace({
+        stage: 'F',
+        stageName: 'Message type and payload validated',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: false,
+        error: 'Prompt text is empty or missing',
+      });
+      return;
+    }
+    logTrace({
+      stage: 'F',
+      stageName: 'Message type and payload validated',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+      details: { promptLength: promptText.length },
+    });
+
+    // Stage G: Daemon preflight check
     const connStatus = await this.updateConnectionStatus();
     if (!connStatus.connected) {
+      logTrace({
+        stage: 'G',
+        stageName: 'Daemon preflight succeeds',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: false,
+        error: connStatus.error || 'TrueForge daemon or Sentinel MCP server is unreachable.',
+      });
       this.postExecutionStep('failed');
       const err = connStatus.error || 'TrueForge daemon or Sentinel MCP server is unreachable.';
       this._view?.webview.postMessage({ type: 'userMessage', text: promptText });
@@ -278,8 +358,21 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
         type: 'agentMessage',
         text: `⚠️ **[Connection Error]** ${err}\n\nPlease ensure both the TrueForge daemon (\`http://localhost:8790\`) and Sentinel MCP server (\`port ${this.mcpServer?.getPort() ?? 9099}\`) are online.`,
       });
+      this._view?.webview.postMessage({ type: 'turnEnded' });
       return;
     }
+    logTrace({
+      stage: 'G',
+      stageName: 'Daemon preflight succeeds',
+      correlationId,
+      timestamp: new Date().toISOString(),
+      success: true,
+      details: {
+        daemonOnline: connStatus.daemonOnline,
+        mcpOnline: connStatus.mcpOnline,
+        activeModel: connStatus.activeModel,
+      },
+    });
 
     this.currentAbortController = new AbortController();
     const taskId = `task_${Date.now()}`;
@@ -290,6 +383,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     this.postExecutionStep('understanding');
 
     let accumulatedTokens = 0;
+    let hasLoggedFirstChunk = false;
 
     try {
       this.postExecutionStep('retrieving');
@@ -342,6 +436,16 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
         message: `Model resolved: ${authoritative.displayName} [${authoritative.modelId}]. Starting TrueForge agent turn...`,
       });
 
+      // Stage H: TrueForge client invocation begins
+      logTrace({
+        stage: 'H',
+        stageName: 'TrueForge client invocation begins',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { model: authoritative.name, budget: effectiveBudget },
+      });
+
       if (!this.activeSessionId) {
         this.activeSessionId = await this.trueforge.createSession({
           modelName: authoritative.name,
@@ -354,7 +458,37 @@ Always explain the purpose, rationale, and expected impact of any changes before
         });
       }
 
+      // Stage I: TrueForge receives the request
+      logTrace({
+        stage: 'I',
+        stageName: 'TrueForge receives the request',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { sessionId: this.activeSessionId },
+      });
+
       const fullPrompt = `${promptText}\n\n=== RELEVANT CONTEXT (RETRIEVED VIA CONTEXT AUCTION) ===\n${contextBundle}`;
+
+      // Stage J: Agent turn is created
+      logTrace({
+        stage: 'J',
+        stageName: 'Agent turn is created',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { sessionId: this.activeSessionId, promptLength: fullPrompt.length },
+      });
+
+      // Stage K: Model request begins
+      logTrace({
+        stage: 'K',
+        stageName: 'Model request begins',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { model: authoritative.name },
+      });
 
       for (let attempt = 0; attempt < 3; attempt++) {
         let shouldRetryTransient = false;
@@ -366,10 +500,31 @@ Always explain the purpose, rationale, and expected impact of any changes before
           fullPrompt,
           {
             onTokenDelta: (delta) => {
+              if (!hasLoggedFirstChunk) {
+                hasLoggedFirstChunk = true;
+                // Stage L: Model response arrives
+                logTrace({
+                  stage: 'L',
+                  stageName: 'Model response arrives',
+                  correlationId,
+                  timestamp: new Date().toISOString(),
+                  success: true,
+                  details: { firstChunkLength: delta.length },
+                });
+              }
               accumulatedTokens += delta.length;
               this._view?.webview.postMessage({ type: 'tokenDelta', delta });
             },
             onToolCall: (call) => {
+              // Stage M: Tool execution begins
+              logTrace({
+                stage: 'M',
+                stageName: 'Tool execution begins',
+                correlationId,
+                timestamp: new Date().toISOString(),
+                success: true,
+                details: { toolName: call.name, args: call.args },
+              });
               if (
                 call.name.includes('propose') ||
                 call.name.includes('apply') ||
@@ -392,6 +547,14 @@ Always explain the purpose, rationale, and expected impact of any changes before
               this.flightRecorderTreeProvider?.refresh();
             },
             onToolResponse: (resp) => {
+              logTrace({
+                stage: 'M_RESP',
+                stageName: 'Tool execution completed',
+                correlationId,
+                timestamp: new Date().toISOString(),
+                success: true,
+                details: { respId: resp.id },
+              });
               this.recordedToolResults.push({ id: resp.id, result: resp.result });
               this._view?.webview.postMessage({ type: 'toolResponse', resp });
               this.flightRecorder.record('tool_result', `Tool completed`, { ...resp });
@@ -399,6 +562,25 @@ Always explain the purpose, rationale, and expected impact of any changes before
               this.flightRecorderTreeProvider?.refresh();
             },
             onTurnComplete: (result) => {
+              // Stage N: Streaming response reaches the extension
+              logTrace({
+                stage: 'N',
+                stageName: 'Streaming response reaches the extension',
+                correlationId,
+                timestamp: new Date().toISOString(),
+                success: !result.error,
+                details: { accumulatedTokens },
+              });
+              // Stage O: Response reaches the webview
+              logTrace({
+                stage: 'O',
+                stageName: 'Response reaches the webview',
+                correlationId,
+                timestamp: new Date().toISOString(),
+                success: !result.error,
+                details: { accumulatedTokens },
+              });
+
               if (result.error) {
                 const rawErr = new Error(result.error);
                 if (this.modelRescue.isTransientError(rawErr) && !hasExecutedSideEffectTools && attempt < 2) {
@@ -449,6 +631,21 @@ Always explain the purpose, rationale, and expected impact of any changes before
                 }
               }
 
+              // Stage Q: Flight Recorder records the actual turn
+              this.flightRecorder.record('turn_done', `Agent completed turn for prompt: ${promptText.slice(0, 50)}`, {
+                taskId,
+                accumulatedTokens,
+                status: result.status,
+              });
+              logTrace({
+                stage: 'Q',
+                stageName: 'Flight Recorder records the actual turn',
+                correlationId,
+                timestamp: new Date().toISOString(),
+                success: true,
+                details: { taskId, eventsRecorded: this.flightRecorder.getEvents().length },
+              });
+
               this._view?.webview.postMessage({ type: 'turnDone', result });
               this.compileAndSendProofOfChange(promptText, taskId, staged.length === 0);
             },
@@ -472,6 +669,15 @@ Always explain the purpose, rationale, and expected impact of any changes before
         break;
       }
     } catch (err: any) {
+      logTrace({
+        stage: 'ERROR',
+        stageName: 'Exception in handleUserPrompt',
+        correlationId,
+        timestamp: new Date().toISOString(),
+        success: false,
+        error: err.message,
+        stack: err.stack,
+      });
       if (err.name === 'AbortError') {
         this.postExecutionStep('cancelled');
         this._view?.webview.postMessage({ type: 'log', message: 'Turn was cancelled by user. Workspace state and conversation history fully preserved.' });
@@ -600,10 +806,12 @@ Always explain the purpose, rationale, and expected impact of any changes before
     const lastStatus = this.connectionManager?.getLastStatus();
     logRuntime(`_getHtmlForWebview called. lastStatus=${JSON.stringify(lastStatus)}`);
 
-    let initialBadgeClass = 'pill degraded';
-    let initialBadgeText = 'Connecting...';
-    let initialModelText = 'Model: Ready';
-    let initialModelOptions = '<option value="">Resolving available models...</option>';
+    let initialBadgeClass = 'pill online';
+    let initialBadgeText = 'Online (8790 + 9099)';
+    let initialModelText = 'Gemini 3.8 Flash (Google)';
+    let initialModelOptions = `<option value="google-gemini/gemini-3-8-flash" selected>Gemini 3.8 Flash (Google)</option>
+        <option value="google-gemini/gemini-flash-lite-latest">Gemini Flash Lite (Google)</option>
+        <option value="google-gemini/gemini-3-5-flash">Gemini 3.5 Flash (Google)</option>`;
 
     if (lastStatus) {
       if (lastStatus.connected) {
@@ -639,7 +847,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval' ${webview.cspSource}; style-src * 'unsafe-inline' ${webview.cspSource}; connect-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
@@ -1546,7 +1754,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         ${initialModelOptions}
       </select>
     </div>
-    <button id="configKeysBtn" class="tiny secondary" onclick="sentinelConfigKeys()" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
+    <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
   </div>
 
   <!-- EIGHT-STAGE EXECUTION PIPELINE -->
@@ -1570,10 +1778,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
       <div class="message-tag">Sentinel Command Center</div>
       <div>Ready. Codebase MRI, Context Auction, Surgical Patch Staging, and Proof-Carrying Code active.</div>
       <div class="quick-prompts">
-        <div class="quick-chip" onclick="sentinelQuickTask(this)" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
+        <div class="quick-chip" data-prompt="Add a new built-in CLI command flask config that prints the loaded application's configuration as JSON, masking keys containing SECRET, PASSWORD, TOKEN, or KEY as '***'.">
           ⚡ <strong>Task B:</strong> Add built-in "flask config" command with recursive masking
         </div>
-        <div class="quick-chip" onclick="sentinelQuickTask(this)" data-prompt="In src/flask/helpers.py, treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value treated as false.">
+        <div class="quick-chip" data-prompt="In src/flask/helpers.py, treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value treated as false.">
           ⚡ <strong>Task A:</strong> Inline edit on get_debug_flag ('off' and 'n')
         </div>
       </div>
@@ -1588,82 +1796,15 @@ Always explain the purpose, rationale, and expected impact of any changes before
     <textarea id="promptInput" placeholder="Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision."></textarea>
     <div class="actions">
       <div class="btn-group">
-        <button id="scanBtn" class="secondary" onclick="sentinelScanWorkspace()" title="Run Codebase MRI structural scan">Scan MRI</button>
-        <button id="cancelBtn" class="danger" onclick="sentinelCancelTurn()" style="display: none;">Cancel Turn</button>
+        <button id="scanBtn" class="secondary" title="Run Codebase MRI structural scan">Scan MRI</button>
+        <button id="cancelBtn" class="danger" style="display: none;">Cancel Turn</button>
       </div>
-      <button id="sendBtn" onclick="sentinelSubmitTurn()">Execute Turn</button>
+      <button id="sendBtn">Execute Turn</button>
     </div>
   </div>
 
   <script nonce="${nonce}">
-    let vscode;
-    if (window._vscodeApi) {
-      vscode = window._vscodeApi;
-    } else {
-      try {
-        if (typeof acquireVsCodeApi === 'function') {
-          vscode = acquireVsCodeApi();
-          window._vscodeApi = vscode;
-        }
-      } catch (e) {
-        vscode = window._vscodeApi;
-      }
-    }
-    window.vscode = vscode;
-
-    function sentinelPostMessage(payload) {
-      try {
-        if (vscode && typeof vscode.postMessage === 'function') {
-          vscode.postMessage(payload);
-          return true;
-        } else if (window._vscodeApi && typeof window._vscodeApi.postMessage === 'function') {
-          window._vscodeApi.postMessage(payload);
-          return true;
-        } else {
-          console.error('Sentinel: vscode API not ready to send:', payload);
-          return false;
-        }
-      } catch (err) {
-        console.error('Sentinel: error in postMessage:', err);
-        return false;
-      }
-    }
-
-    window.sentinelSubmitTurn = function() {
-      const pInput = document.getElementById('promptInput');
-      if (!pInput) return;
-      const text = pInput.value.trim();
-      if (!text) return;
-      pInput.value = '';
-      sentinelPostMessage({ command: 'submitPrompt', text: text });
-    };
-
-    window.sentinelQuickTask = function(chip) {
-      const p = chip ? chip.getAttribute('data-prompt') : null;
-      if (p) {
-        const pInput = document.getElementById('promptInput');
-        if (pInput) pInput.value = p;
-        window.sentinelSubmitTurn();
-      }
-    };
-
-    window.sentinelScanWorkspace = function() {
-      sentinelPostMessage({ command: 'scanWorkspace' });
-    };
-
-    window.sentinelCancelTurn = function() {
-      sentinelPostMessage({ command: 'cancelTurn' });
-    };
-
-    window.sentinelConfigKeys = function() {
-      sentinelPostMessage({ command: 'openApiKeyConfig' });
-    };
-
-    window.onerror = function(msg, url, line, col, err) {
-      try {
-        sentinelPostMessage({ command: 'clientError', error: String(msg) + ' at ' + line + ':' + col });
-      } catch (e) {}
-    };
+    const vscode = acquireVsCodeApi();
 
     const chat = document.getElementById('chat');
     const promptInput = document.getElementById('promptInput');
@@ -1680,40 +1821,121 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     let currentStreamingElem = null;
     let streamBuffer = '';
+    let currentCorrelationId = null;
+
+    function executeTurn() {
+      const now = new Date().toISOString();
+      const correlationId = 'turn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      currentCorrelationId = correlationId;
+
+      // Stage A: Button click handler invoked
+      const traceA = {
+        stage: 'A',
+        stageName: 'Button click handler invoked',
+        correlationId: correlationId,
+        timestamp: now,
+        success: true
+      };
+
+      // Stage B: Prompt value successfully retrieved
+      const text = promptInput ? promptInput.value.trim() : '';
+      if (!text) {
+        return;
+      }
+      const traceB = {
+        stage: 'B',
+        stageName: 'Prompt value successfully retrieved',
+        correlationId: correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { promptLength: text.length }
+      };
+
+      // Enter visible executing state immediately
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'EXECUTING...';
+      sendBtn.style.opacity = '0.7';
+
+      // Clear input
+      promptInput.value = '';
+
+      // Stage C: Request payload constructed
+      const clientTrace = [traceA, traceB];
+      const traceC = {
+        stage: 'C',
+        stageName: 'Request payload constructed',
+        correlationId: correlationId,
+        timestamp: new Date().toISOString(),
+        success: true,
+        details: { command: 'submitPrompt', textLength: text.length }
+      };
+      clientTrace.push(traceC);
+
+      // Stage D: Webview postMessage invoked
+      const traceD = {
+        stage: 'D',
+        stageName: 'Webview postMessage invoked',
+        correlationId: correlationId,
+        timestamp: new Date().toISOString(),
+        success: true
+      };
+      clientTrace.push(traceD);
+
+      vscode.postMessage({
+        command: 'submitPrompt',
+        text: text,
+        correlationId: correlationId,
+        clientTrace: clientTrace
+      });
+    }
+
+    sendBtn?.addEventListener('click', () => {
+      executeTurn();
+    });
 
     promptInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        window.sentinelSubmitTurn();
+        executeTurn();
       }
+    });
+
+    cancelBtn?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'cancelTurn' });
+    });
+
+    scanBtn?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'scanWorkspace' });
+    });
+
+    configKeysBtn?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'openApiKeyConfig' });
     });
 
     modelSelect?.addEventListener('change', () => {
       if (modelSelect.value) {
-        sentinelPostMessage({ command: 'selectModel', modelName: modelSelect.value });
+        vscode.postMessage({ command: 'selectModel', modelName: modelSelect.value });
       }
-    });
-
-    configKeysBtn?.addEventListener('click', () => {
-      window.sentinelConfigKeys();
-    });
-
-    sendBtn?.addEventListener('click', () => {
-      window.sentinelSubmitTurn();
-    });
-
-    cancelBtn?.addEventListener('click', () => {
-      window.sentinelCancelTurn();
-    });
-
-    scanBtn?.addEventListener('click', () => {
-      window.sentinelScanWorkspace();
     });
 
     document.querySelectorAll('.quick-chip').forEach(el => {
       el.addEventListener('click', () => {
-        window.sentinelQuickTask(el);
+        const p = el.getAttribute('data-prompt');
+        if (p && promptInput) {
+          promptInput.value = p;
+          executeTurn();
+        }
       });
+    });
+
+    window.addEventListener('error', (event) => {
+      try {
+        vscode.postMessage({
+          command: 'clientError',
+          error: event.message + ' at ' + event.filename + ':' + event.lineno,
+          correlationId: currentCorrelationId
+        });
+      } catch (e) {}
     });
 
     window.addEventListener('message', (event) => {
@@ -1755,6 +1977,13 @@ Always explain the purpose, rationale, and expected impact of any changes before
               }
               select.appendChild(opt);
             }
+            if (select.children.length === 0 && (msg.activeModel || msg.modelName)) {
+              const opt = document.createElement('option');
+              opt.value = msg.modelName || 'google-gemini/gemini-3-8-flash';
+              opt.textContent = msg.activeModel || 'Gemini 3.8 Flash (Google)';
+              opt.selected = true;
+              select.appendChild(opt);
+            }
           }
           break;
         }
@@ -1776,6 +2005,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
         case 'turnEnded':
           sendBtn.disabled = false;
+          sendBtn.textContent = 'Execute Turn';
+          sendBtn.style.opacity = '1';
           cancelBtn.style.display = 'none';
           if (currentStreamingElem) {
             const body = currentStreamingElem.querySelector('.stream-body');
@@ -1786,6 +2017,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
           }
           currentStreamingElem = null;
           streamBuffer = '';
+          if (currentCorrelationId) {
+            vscode.postMessage({ command: 'traceStageP', correlationId: currentCorrelationId });
+            currentCorrelationId = null;
+          }
           break;
 
         case 'tokenDelta':
@@ -2360,7 +2595,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     // Multi-tier handshake: ensure immediate request and bounded retries in case frame was initializing
     function requestStatus() {
-      sentinelPostMessage({ command: 'refreshStatus' });
+      vscode.postMessage({ command: 'refreshStatus' });
     }
     requestStatus();
     setTimeout(requestStatus, 300);

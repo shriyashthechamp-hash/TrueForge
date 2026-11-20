@@ -159,4 +159,37 @@ describe('Bauhaus Design System UI Architecture & Contract Validation', () => {
     expect(html).toContain('.bauhaus-quote');
     expect(html).toContain('.tool-response-box');
   });
+
+  it('renders live connected badge in initial HTML when connection manager has active status', () => {
+    const mockManager = {
+      getLastStatus: () => ({
+        state: 'connected',
+        connected: true,
+        daemonOnline: true,
+        mcpOnline: true,
+        mcpSynchronized: true,
+        activeModel: 'Gemini 3.8 Flash (Google)',
+      }),
+      setStatusCallback: vi.fn(),
+      triggerImmediateCheck: vi.fn(),
+    } as any;
+
+    const liveProvider = new SentinelAgentViewProvider(
+      mockExtensionUri,
+      '/mock/root',
+      mockPatchManager,
+      {} as any,
+      {} as any,
+      mockTrueForge,
+      mockFlightRecorder,
+      undefined,
+      undefined,
+      undefined,
+      mockManager
+    );
+
+    const liveHtml = (liveProvider as any)._getHtmlForWebview(mockWebview);
+    expect(liveHtml).toContain('<div id="statusBadge" class="pill online">Online (8790 + 9099)</div>');
+    expect(liveHtml).toContain('<div id="modelPill" class="pill model">Gemini 3.8 Flash (Google)</div>');
+  });
 });

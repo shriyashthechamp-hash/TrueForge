@@ -1,6 +1,14 @@
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+
+function logRuntime(msg: string): void {
+  try {
+    const entry = `[${new Date().toISOString()}] ${msg}\n`;
+    fs.appendFileSync('/tmp/forge_sentinel_runtime.log', entry, 'utf8');
+  } catch {}
+}
 import type { TrueForgeHarnessClient } from '../agent/TrueForgeHarnessClient.js';
 import type { CodebaseMri } from '../context/CodebaseMri.js';
 import type { ContextAuction } from '../context/ContextAuction.js';
@@ -43,6 +51,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ): void {
     this._view = webviewView;
+    logRuntime(`resolveWebviewView called. visible=${webviewView.visible}`);
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -87,6 +96,7 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'refreshStatus': {
+          logRuntime('Received refreshStatus command from webview');
           await this.updateConnectionStatus();
           break;
         }
@@ -107,9 +117,10 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     });
 
     if (this.connectionManager) {
-      (this.connectionManager as any).onStatusChange = (status: DetailedConnectionStatus) => {
+      this.connectionManager.setStatusCallback((status: DetailedConnectionStatus) => {
+        logRuntime(`connectionManager.onStatusChange callback fired: connected=${status.connected}`);
         this.postStatusUpdate(status);
-      };
+      });
     }
 
     this.updateConnectionStatus();
@@ -117,14 +128,15 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
 
   public setConnectionManager(manager: ConnectionLifecycleManager): void {
     this.connectionManager = manager;
-    (this.connectionManager as any).onStatusChange = (status: DetailedConnectionStatus) => {
+    this.connectionManager.setStatusCallback((status: DetailedConnectionStatus) => {
       this.postStatusUpdate(status);
-    };
+    });
   }
 
   public async updateConnectionStatus(): Promise<DetailedConnectionStatus> {
     if (this.connectionManager) {
       const status = await this.connectionManager.triggerImmediateCheck();
+      logRuntime(`updateConnectionStatus completed: connected=${status.connected}, state=${status.state}`);
       this.postStatusUpdate(status);
       return status;
     }
@@ -172,10 +184,14 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postStatusUpdate(status: DetailedConnectionStatus): void {
+    logRuntime(`postStatusUpdate called: connected=${status.connected}, state=${status.state}`);
     this._view?.webview.postMessage({
       type: 'statusUpdate',
       ...status,
-    });
+    }).then(
+      (delivered) => logRuntime(`postStatusUpdate delivered=${delivered}`),
+      (err) => logRuntime(`postStatusUpdate error=${err}`)
+    );
   }
 
   private async handleOpenApiKeyConfig(): Promise<void> {
@@ -566,6 +582,43 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
     const nonce = crypto.randomBytes(16).toString('hex');
+    const lastStatus = this.connectionManager?.getLastStatus();
+    logRuntime(`_getHtmlForWebview called. lastStatus=${JSON.stringify(lastStatus)}`);
+
+    let initialBadgeClass = 'pill degraded';
+    let initialBadgeText = 'Connecting...';
+    let initialModelText = 'Model: Ready';
+    let initialModelOptions = '<option value="">Resolving available models...</option>';
+
+    if (lastStatus) {
+      if (lastStatus.connected) {
+        initialBadgeClass = 'pill online';
+        initialBadgeText = 'Online (8790 + 9099)';
+      } else if (lastStatus.state === 'degraded_mcp') {
+        initialBadgeClass = 'pill degraded';
+        initialBadgeText = 'MCP Offline (9099)';
+      } else if (lastStatus.state === 'degraded_daemon') {
+        initialBadgeClass = 'pill offline';
+        initialBadgeText = 'Daemon Offline (8790)';
+      } else {
+        initialBadgeClass = 'pill offline';
+        initialBadgeText = 'Offline (8790 + 9099)';
+      }
+
+      if (lastStatus.activeModel) {
+        initialModelText = lastStatus.activeModel;
+      }
+
+      if (lastStatus.models && lastStatus.models.length > 0) {
+        initialModelOptions = lastStatus.models
+          .filter((m) => m.isAvailable)
+          .map((m) => {
+            const isSelected = m.displayName === lastStatus.activeModel || m.name === lastStatus.modelName;
+            return `<option value="${m.name}" ${isSelected ? 'selected' : ''}>${m.displayName}</option>`;
+          })
+          .join('\n');
+      }
+    }
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -1469,8 +1522,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
         FORGE//SENTINEL
       </div>
       <div class="status-pills">
-        <div id="statusBadge" class="pill offline">Daemon: Offline</div>
-        <div id="modelPill" class="pill model">Model: Ready</div>
+        <div id="statusBadge" class="${initialBadgeClass}">${initialBadgeText}</div>
+        <div id="modelPill" class="pill model">${initialModelText}</div>
       </div>
     </div>
     <div class="brand-tagline">Understand First • Plan Intelligently • Change Precisely • Prove Everything</div>
@@ -1481,7 +1534,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
     <div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0;">
       <span class="model-label">Active Model:</span>
       <select id="modelSelect">
-        <option value="">Resolving available models...</option>
+        ${initialModelOptions}
       </select>
     </div>
     <button id="configKeysBtn" class="tiny secondary" style="white-space:nowrap;" title="Configure AI Provider API Keys">⚙️ Config Keys</button>
@@ -1534,7 +1587,13 @@ Always explain the purpose, rationale, and expected impact of any changes before
   </div>
 
   <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
+    let vscode;
+    try {
+      vscode = acquireVsCodeApi();
+    } catch (e) {
+      vscode = window._vscodeApi;
+    }
+    window._vscodeApi = vscode;
     const chat = document.getElementById('chat');
     const promptInput = document.getElementById('promptInput');
     const sendBtn = document.getElementById('sendBtn');
@@ -2222,8 +2281,15 @@ Always explain the purpose, rationale, and expected impact of any changes before
       });
     }
 
-    // Request immediate connection status once webview DOM and event listeners are active
-    vscode.postMessage({ command: 'refreshStatus' });
+    // Multi-tier handshake: ensure immediate request and bounded retries in case frame was initializing
+    function requestStatus() {
+      try {
+        vscode?.postMessage({ command: 'refreshStatus' });
+      } catch (e) {}
+    }
+    requestStatus();
+    setTimeout(requestStatus, 300);
+    setTimeout(requestStatus, 1000);
   </script>
 </body>
 </html>`;

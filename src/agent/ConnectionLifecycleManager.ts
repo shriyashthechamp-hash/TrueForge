@@ -193,6 +193,13 @@ export class ConnectionLifecycleManager {
     return this.lastStatus;
   }
 
+  public setStatusCallback(callback: (status: DetailedConnectionStatus) => void): void {
+    (this as any).onStatusChange = callback;
+    if (this.lastStatus) {
+      callback(this.lastStatus);
+    }
+  }
+
   public dispose(): void {
     this.isDisposed = true;
     if (this.timer) {

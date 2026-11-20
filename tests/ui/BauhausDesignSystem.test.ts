@@ -104,6 +104,7 @@ describe('Bauhaus Design System UI Architecture & Contract Validation', () => {
       'tokenDelta',
       'userMessage',
       'toolCall',
+      'toolResponse',
       'contextReceipt',
       'stagedPatches',
       'proofOfChange',
@@ -144,5 +145,18 @@ describe('Bauhaus Design System UI Architecture & Contract Validation', () => {
   it('contains responsive adaptations for narrow sidebars down to 320px', () => {
     expect(html).toContain('@media (max-width: 360px)');
     expect(html).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('includes Paper Protocol markdown typography and code block rendering styles', () => {
+    expect(html).toContain('.heading-h1');
+    expect(html).toContain('.heading-h2');
+    expect(html).toContain('.heading-h3');
+    expect(html).toContain('.message-paragraph');
+    expect(html).toContain('.code-block-wrapper');
+    expect(html).toContain('.code-block-header');
+    expect(html).toContain('.copy-code-btn');
+    expect(html).toContain('.bauhaus-table');
+    expect(html).toContain('.bauhaus-quote');
+    expect(html).toContain('.tool-response-box');
   });
 });

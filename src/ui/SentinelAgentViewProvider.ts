@@ -858,6 +858,217 @@ Always explain the purpose, rationale, and expected impact of any changes before
     .message.user .message-tag { color: var(--electric-cobalt); }
     .message.assistant .message-tag { color: var(--ink-black); }
 
+    /* Markdown Headings in Messages */
+    .heading-h1 {
+      font-size: 15px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 2px solid var(--border-bold);
+      padding-bottom: 3px;
+      margin: 10px 0 6px 0;
+      color: var(--ink-black);
+    }
+    .heading-h2 {
+      font-size: 13.5px;
+      font-weight: 700;
+      border-bottom: 1.5px solid var(--border-subtle);
+      padding-bottom: 2px;
+      margin: 9px 0 5px 0;
+      color: var(--ink-black);
+    }
+    .heading-h3 {
+      font-size: 12.5px;
+      font-weight: 700;
+      margin: 7px 0 3px 0;
+      color: var(--electric-cobalt);
+    }
+    .heading-h4, .heading-h5, .heading-h6 {
+      font-size: 11.5px;
+      font-weight: 700;
+      margin: 6px 0 2px 0;
+      color: var(--ink-muted);
+    }
+
+    /* Paragraphs and Text */
+    .message-paragraph {
+      margin: 0 0 6px 0;
+      line-height: 1.55;
+      font-size: 11.5px;
+      word-break: break-word;
+    }
+    .message-paragraph:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Inline Code */
+    .inline-code {
+      background: var(--paper-warm);
+      border: 1px solid var(--border-subtle);
+      color: var(--ink-black);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* Fenced Code Blocks */
+    .code-block-wrapper {
+      background: #18181b;
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      border-radius: 3px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .code-block-wrapper.streaming-code {
+      border-color: var(--electric-cobalt);
+    }
+    .code-block-header {
+      background: #27272a;
+      border-bottom: 1px solid #3f3f46;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 8px;
+      font-family: var(--font-mono);
+    }
+    .code-lang-tag {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: var(--bauhaus-yellow);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .copy-code-btn {
+      background: var(--paper-warm);
+      color: var(--ink-black);
+      border: 1px solid var(--border-bold);
+      padding: 2px 6px;
+      font-size: 9px;
+      font-weight: 700;
+      cursor: pointer;
+      text-transform: uppercase;
+      border-radius: 2px;
+      transition: background 0.15s ease;
+    }
+    .copy-code-btn:hover {
+      background: var(--paper-white);
+    }
+    .code-pre {
+      margin: 0;
+      padding: 8px 10px;
+      overflow-x: auto;
+      background: #18181b;
+    }
+    .code-content {
+      color: #fafafa;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre;
+    }
+
+    /* Tables */
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      margin: 8px 0;
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      border-radius: 3px;
+    }
+    .bauhaus-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      background: var(--paper-white);
+    }
+    .bauhaus-table th {
+      background: var(--paper-warm);
+      border-bottom: 2px solid var(--border-bold);
+      border-right: 1px solid var(--border-subtle);
+      padding: 5px 7px;
+      text-align: left;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 9.5px;
+      letter-spacing: 0.03em;
+    }
+    .bauhaus-table th:last-child {
+      border-right: none;
+    }
+    .bauhaus-table td {
+      border-bottom: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+      padding: 4px 7px;
+      font-size: 11px;
+    }
+    .bauhaus-table td:last-child {
+      border-right: none;
+    }
+    .bauhaus-table tr:last-child td {
+      border-bottom: none;
+    }
+    .bauhaus-table tr:nth-child(even) td {
+      background: var(--paper-secondary);
+    }
+
+    /* Blockquotes */
+    .bauhaus-quote {
+      border-left: 3.5px solid var(--electric-cobalt);
+      background: var(--tint-cobalt);
+      margin: 6px 0;
+      padding: 6px 9px;
+      color: var(--ink-black);
+      font-style: italic;
+      font-size: 11.5px;
+      border-radius: 0 3px 3px 0;
+    }
+
+    /* Lists */
+    .bauhaus-ul, .bauhaus-ol {
+      margin: 5px 0 6px 0;
+      padding-left: 18px;
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .bauhaus-ul-nested {
+      margin: 2px 0;
+      padding-left: 16px;
+    }
+    .bauhaus-ul li, .bauhaus-ol li {
+      margin-bottom: 2px;
+    }
+    .task-list-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: default;
+    }
+    .task-checkbox {
+      margin: 0;
+      accent-color: var(--electric-cobalt);
+    }
+
+    /* Links */
+    .bauhaus-link {
+      color: var(--electric-cobalt);
+      text-decoration: underline;
+      font-weight: 600;
+    }
+    .bauhaus-link:hover {
+      color: var(--cobalt-hover);
+    }
+
+    /* Divider */
+    .bauhaus-divider {
+      border: none;
+      height: 2px;
+      background: var(--border-bold);
+      margin: 8px 0;
+    }
+
     /* Tool Call Cards */
     .tool-box {
       background: var(--paper-secondary);
@@ -872,6 +1083,36 @@ Always explain the purpose, rationale, and expected impact of any changes before
     }
     .tool-box strong {
       color: var(--electric-cobalt);
+    }
+
+    /* Tool Response Card */
+    .tool-response-box {
+      background: var(--paper-white);
+      border: 2px solid var(--border-bold);
+      box-shadow: var(--shadow-sm);
+      border-radius: 4px;
+      margin-top: 4px;
+      overflow: hidden;
+    }
+    .tool-response-header {
+      padding: 4px 8px;
+      background: var(--tint-green);
+      border-bottom: 1.5px solid var(--border-bold);
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .tool-response-content {
+      padding: 6px 8px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      background: var(--paper-warm);
+      border-top: 1px solid var(--border-subtle);
     }
 
     /* Context Auction Receipt Box */
@@ -1308,6 +1549,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
     const stepPipeline = document.getElementById('stepPipeline');
 
     let currentStreamingElem = null;
+    let streamBuffer = '';
 
     modelSelect?.addEventListener('change', () => {
       if (modelSelect.value) {
@@ -1388,6 +1630,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'turnStarted':
           sendBtn.disabled = true;
           cancelBtn.style.display = 'inline-block';
+          streamBuffer = '';
           currentStreamingElem = document.createElement('div');
           currentStreamingElem.className = 'message assistant';
           currentStreamingElem.innerHTML = '<div class="message-tag">Sentinel Agent</div><div class="stream-body"></div>';
@@ -1398,14 +1641,31 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'turnEnded':
           sendBtn.disabled = false;
           cancelBtn.style.display = 'none';
+          if (currentStreamingElem) {
+            const body = currentStreamingElem.querySelector('.stream-body');
+            if (body && streamBuffer) {
+              body.innerHTML = renderMarkdown(streamBuffer, { isStreaming: false });
+              attachCopyListeners(body);
+            }
+          }
           currentStreamingElem = null;
+          streamBuffer = '';
           break;
 
         case 'tokenDelta':
-          if (currentStreamingElem) {
-            const body = currentStreamingElem.querySelector('.stream-body');
-            if (body) {
-              body.textContent += msg.delta;
+          if (!currentStreamingElem) {
+            currentStreamingElem = document.createElement('div');
+            currentStreamingElem.className = 'message assistant';
+            currentStreamingElem.innerHTML = '<div class="message-tag">Sentinel Agent</div><div class="stream-body"></div>';
+            chat.appendChild(currentStreamingElem);
+          }
+          streamBuffer += msg.delta;
+          const body = currentStreamingElem.querySelector('.stream-body');
+          if (body) {
+            const isNearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
+            body.innerHTML = renderMarkdown(streamBuffer, { isStreaming: true });
+            attachCopyListeners(body);
+            if (isNearBottom) {
               chat.scrollTop = chat.scrollHeight;
             }
           }
@@ -1414,16 +1674,48 @@ Always explain the purpose, rationale, and expected impact of any changes before
         case 'userMessage':
           const userElem = document.createElement('div');
           userElem.className = 'message user';
-          userElem.innerHTML = '<div class="message-tag">Developer</div><div>' + escapeHtml(msg.text) + '</div>';
+          userElem.innerHTML = '<div class="message-tag">Developer</div><div style="white-space:pre-wrap;">' + escapeHtml(msg.text) + '</div>';
           chat.appendChild(userElem);
           chat.scrollTop = chat.scrollHeight;
           break;
 
         case 'toolCall':
+          if (currentStreamingElem) {
+            const curBody = currentStreamingElem.querySelector('.stream-body');
+            if (curBody && streamBuffer) {
+              curBody.innerHTML = renderMarkdown(streamBuffer, { isStreaming: false });
+              attachCopyListeners(curBody);
+            }
+            currentStreamingElem = null;
+            streamBuffer = '';
+          }
           const toolBox = document.createElement('div');
           toolBox.className = 'tool-box';
-          toolBox.innerHTML = '⚙️ <strong>[Tool Call]</strong> ' + escapeHtml(msg.call.name) + '<code>(' + escapeHtml(JSON.stringify(msg.call.args)) + ')</code>';
+          const callArgsStr = typeof msg.call.args === 'object' ? JSON.stringify(msg.call.args, null, 2) : String(msg.call.args || '');
+          toolBox.innerHTML = 
+            '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">' +
+              '<span>⚙️ <strong>[Tool Call]</strong> <code>' + escapeHtml(msg.call.name) + '</code></span>' +
+              '<span class="badge" style="background:var(--tint-yellow); color:#854d0e; border:1px solid var(--bauhaus-yellow); font-size:8.5px;">RUNNING</span>' +
+            '</div>' +
+            '<details style="font-size:10px; cursor:pointer;"><summary style="color:var(--ink-muted);">Arguments</summary><pre style="margin:3px 0; padding:4px 6px; background:var(--paper-white); border:1px solid var(--border-subtle); overflow-x:auto; font-family:var(--font-mono);">' + escapeHtml(callArgsStr) + '</pre></details>';
           chat.appendChild(toolBox);
+          chat.scrollTop = chat.scrollHeight;
+          break;
+
+        case 'toolResponse':
+          const toolRespBox = document.createElement('div');
+          toolRespBox.className = 'tool-response-box';
+          const respContent = typeof msg.resp.result === 'object' ? JSON.stringify(msg.resp.result, null, 2) : String(msg.resp.result || 'Success');
+          toolRespBox.innerHTML =
+            '<div class="tool-response-header">' +
+              '<span>✅ <strong>[Tool Result]</strong></span>' +
+              '<span class="badge" style="background:var(--tint-green); color:var(--verified-green); border:1px solid var(--verified-green); font-size:8.5px;">COMPLETED</span>' +
+            '</div>' +
+            '<details style="cursor:pointer;" open>' +
+              '<summary style="padding:4px 8px; font-size:9.5px; font-weight:700; color:var(--ink-muted);">Output Payload</summary>' +
+              '<div class="tool-response-content">' + escapeHtml(respContent) + '</div>' +
+            '</details>';
+          chat.appendChild(toolRespBox);
           chat.scrollTop = chat.scrollHeight;
           break;
 
@@ -1686,6 +1978,248 @@ Always explain the purpose, rationale, and expected impact of any changes before
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    function sanitizeUrl(url) {
+      if (!url) return '#';
+      const trimmed = url.trim();
+      const lower = trimmed.toLowerCase();
+      if (
+        lower.startsWith('javascript:') ||
+        lower.startsWith('data:') ||
+        lower.startsWith('vbscript:')
+      ) {
+        return '#unsafe-link-blocked';
+      }
+      return trimmed;
+    }
+
+    function parseInline(text) {
+      let res = text;
+      res = res.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+      res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+      res = res.replace(/___([^_]+)___/g, '<strong><em>$1</em></strong>');
+      res = res.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      res = res.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+      res = res.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      res = res.replace(/\b_([^_]+)_\b/g, '<em>$1</em>');
+      res = res.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
+        const safeUrl = sanitizeUrl(url);
+        return '<a href="' + safeUrl + '" class="bauhaus-link" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      });
+      return res;
+    }
+
+    function parseListItemContent(content) {
+      const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
+      if (taskMatch) {
+        const isChecked = taskMatch[1].toLowerCase() === 'x';
+        return (
+          '<label class="task-list-item">' +
+          '<input type="checkbox" disabled ' + (isChecked ? 'checked' : '') + ' class="task-checkbox"/> ' +
+          '<span>' + parseInline(taskMatch[2]) + '</span>' +
+          '</label>'
+        );
+      }
+      return parseInline(content);
+    }
+
+    function parseListBlock(listText) {
+      const lines = listText.split('\n');
+      const isOrdered = /^\s*\d+\.\s+/.test(lines[0]);
+      const tag = isOrdered ? 'ol' : 'ul';
+      const listClass = isOrdered ? 'bauhaus-ol' : 'bauhaus-ul';
+
+      let html = '<' + tag + ' class="' + listClass + '">';
+      let inNested = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isIndented = /^(\s{2,}|\t+)/.test(line);
+
+        if (isIndented) {
+          if (!inNested) {
+            html += '<ul class="bauhaus-ul-nested">';
+            inNested = true;
+          }
+          const itemContent = line.replace(/^\s*[-*+]?\s*/, '').replace(/^\s*\d+\.\s*/, '');
+          html += '<li>' + parseListItemContent(itemContent) + '</li>';
+        } else {
+          if (inNested) {
+            html += '</ul>';
+            inNested = false;
+          }
+          const itemContent = line.replace(/^\s*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '');
+          html += '<li>' + parseListItemContent(itemContent) + '</li>';
+        }
+      }
+
+      if (inNested) {
+        html += '</ul>';
+      }
+
+      html += '</' + tag + '>';
+      return html;
+    }
+
+    function renderMarkdown(markdown, options) {
+      if (!markdown || typeof markdown !== 'string') return '';
+      const isStreaming = !!(options && options.isStreaming);
+      const codeBlocks = [];
+      const inlineCodes = [];
+
+      let text = markdown;
+
+      const BT3 = '\\x60\\x60\\x60';
+      const BT1 = '\\x60';
+
+      // 1. Fenced Code Blocks
+      text = text.replace(new RegExp(BT3 + '([a-zA-Z0-9_+#.-]*)\\n([\\s\\S]*?)(?:' + BT3 + '|$)', 'g'), (match, lang, code) => {
+        const isUnclosed = isStreaming && !match.endsWith(BT3);
+        const cleanLang = (lang || 'code').trim().toLowerCase();
+        const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
+        const escapedCode = escapeHtml(code.endsWith('\n') ? code.slice(0, -1) : code);
+
+        const blockHtml = 
+          '<div class="code-block-wrapper' + (isUnclosed ? ' streaming-code' : '') + '">' +
+            '<div class="code-block-header">' +
+              '<span class="code-lang-tag">' + displayLang + (isUnclosed ? ' • GENERATING' : '') + '</span>' +
+              '<button class="copy-code-btn" type="button" data-code="' + escapeHtml(code) + '">Copy</button>' +
+            '</div>' +
+            '<pre class="code-pre"><code class="code-content language-' + cleanLang + '">' + escapedCode + '</code></pre>' +
+          '</div>';
+
+        codeBlocks.push(blockHtml);
+        return '\n\n%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%\n\n';
+      });
+
+      // 2. Inline Code
+      text = text.replace(new RegExp(BT1 + '([^' + BT1 + '\\n]+)' + BT1, 'g'), (_match, code) => {
+        const escaped = escapeHtml(code);
+        inlineCodes.push('<code class="inline-code">' + escaped + '</code>');
+        return '%%INLINECODE_' + (inlineCodes.length - 1) + '%%';
+      });
+
+      // 3. Horizontal Rules
+      text = text.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr class="bauhaus-divider"/>');
+
+      // 4. Tables
+      text = text.replace(/(?:^|\n)((?:\|[^\n]+\|(?:\r?\n|$))+)/g, (match) => {
+        const lines = match.trim().split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+        if (lines.length < 2) return match;
+        if (!/^\|[- :|]+\|$/.test(lines[1])) return match;
+
+        const headers = lines[0]
+          .split('|')
+          .slice(1, -1)
+          .map((h) => '<th>' + parseInline(h.trim()) + '</th>')
+          .join('');
+
+        const bodyRows = lines
+          .slice(2)
+          .map((row) => {
+            const cells = row
+              .split('|')
+              .slice(1, -1)
+              .map((c) => '<td>' + parseInline(c.trim()) + '</td>')
+              .join('');
+            return '<tr>' + cells + '</tr>';
+          })
+          .join('');
+
+        return (
+          '\n\n<div class="table-container">' +
+          '<table class="bauhaus-table">' +
+          '<thead><tr>' + headers + '</tr></thead>' +
+          '<tbody>' + bodyRows + '</tbody>' +
+          '</table>' +
+          '</div>\n\n'
+        );
+      });
+
+      // 5. Blockquotes
+      text = text.replace(/(?:^|\n)(?:>[\t ]?.*(?:\n>[\t ]?.*)*)/g, (match) => {
+        const content = match
+          .trim()
+          .split('\n')
+          .map((line) => line.replace(/^>[\t ]?/, ''))
+          .join('\n');
+        return '\n\n<blockquote class="bauhaus-quote">' + parseInline(content) + '</blockquote>\n\n';
+      });
+
+      // 6. Split into blocks
+      const blocks = text.split(/\n{2,}/);
+      const renderedBlocks = [];
+
+      for (const block of blocks) {
+        const trimmed = block.trim();
+        if (!trimmed) continue;
+
+        if (
+          trimmed.startsWith('%%CODEBLOCK_') ||
+          trimmed.startsWith('<div class="table-container">') ||
+          trimmed.startsWith('<blockquote') ||
+          trimmed.startsWith('<hr class="bauhaus-divider"/>')
+        ) {
+          renderedBlocks.push(trimmed);
+          continue;
+        }
+
+        const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+          const level = headingMatch[1].length;
+          const content = parseInline(headingMatch[2].trim());
+          renderedBlocks.push('<h' + level + ' class="heading-h' + level + '">' + content + '</h' + level + '>');
+          continue;
+        }
+
+        const isList = /^(?:[-*+]|\d+\.)\s+/.test(trimmed);
+        if (isList) {
+          renderedBlocks.push(parseListBlock(trimmed));
+          continue;
+        }
+
+        const paragraphLines = trimmed.split('\n').map((l) => parseInline(l)).join('<br/>');
+        renderedBlocks.push('<p class="message-paragraph">' + paragraphLines + '</p>');
+      }
+
+      let finalHtml = renderedBlocks.join('\n');
+
+      finalHtml = finalHtml.replace(/%%INLINECODE_(\d+)%%/g, (_match, idx) => {
+        return inlineCodes[Number(idx)] || '';
+      });
+
+      finalHtml = finalHtml.replace(/%%CODEBLOCK_(\d+)%%/g, (_match, idx) => {
+        return codeBlocks[Number(idx)] || '';
+      });
+
+      return finalHtml;
+    }
+
+    function attachCopyListeners(container) {
+      if (!container) return;
+      const buttons = container.querySelectorAll('.copy-code-btn');
+      buttons.forEach((btn) => {
+        if (btn.getAttribute('data-has-listener')) return;
+        btn.setAttribute('data-has-listener', 'true');
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const code = btn.getAttribute('data-code') || btn.closest('.code-block-wrapper')?.querySelector('code')?.textContent || '';
+          navigator.clipboard.writeText(code).then(() => {
+            const orig = btn.textContent;
+            btn.textContent = 'COPIED!';
+            btn.style.background = 'var(--tint-green)';
+            btn.style.borderColor = 'var(--verified-green)';
+            setTimeout(() => {
+              btn.textContent = orig;
+              btn.style.background = 'var(--paper-warm)';
+              btn.style.borderColor = 'var(--border-bold)';
+            }, 2000);
+          }).catch((err) => {
+            console.error('Copy failed:', err);
+          });
+        });
+      });
     }
   </script>
 </body>

@@ -1,3 +1,4 @@
+import { webviewClientScript } from './webviewScript';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -78,11 +79,11 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
     private connectionManager?: ConnectionLifecycleManager
   ) {}
 
-  public async resolveWebviewView(
+  public resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
-  ): Promise<void> {
+  ): void {
     this._view = webviewView;
     logRuntime(`resolveWebviewView called. visible=${webviewView.visible}`);
 
@@ -91,95 +92,86 @@ export class SentinelAgentViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
 
-    // Attach message listener BEFORE setting HTML to prevent early message dropping
-    this.disposables.push(
-      webviewView.webview.onDidReceiveMessage(async (message) => {
-        logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
-        switch (message.command) {
-          case 'submitPrompt': {
-            logRuntime(`submitPrompt received. text length=${message.text?.length}, correlationId=${message.correlationId}`);
-            await this.handleUserPrompt(message.text, message.correlationId, message.clientTrace);
-            break;
-          }
-          case 'traceStageP': {
-            logTrace({
-              stage: 'P',
-              stageName: 'Final assistant message renders in webview',
-              correlationId: message.correlationId || 'unknown',
-              timestamp: new Date().toISOString(),
-              success: true,
-            });
-            break;
-          }
-          case 'cancelTurn': {
-            this.handleCancelTurn(message.correlationId);
-            break;
-          }
-          case 'scanWorkspace': {
-            await this.handleScanWorkspace(message.correlationId);
-            break;
-          }
-          case 'acceptPatch': {
-            await this.handlePatchDecision(message.patchId, 'accept');
-            break;
-          }
-          case 'rejectPatch': {
-            await this.handlePatchDecision(message.patchId, 'reject');
-            break;
-          }
-          case 'revertPatch': {
-            await this.handleRevertPatch(message.patchId);
-            break;
-          }
-          case 'toggleHunk': {
-            this.patchManager.setHunkDecision(message.patchId, message.hunkId, message.accepted);
-            this.refreshStagedPatchesUI();
-            break;
-          }
-          case 'reviewPatchDiff': {
-            await this.handleReviewDiff(message.patchId);
-            break;
-          }
-          case 'refreshStatus': {
-            logRuntime('Received refreshStatus command from webview');
-            await this.updateConnectionStatus();
-            break;
-          }
-          case 'selectModel': {
-            this.userSelectedModel = message.modelName;
-            this.activeSessionId = undefined;
-            if (this.connectionManager) {
-              this.connectionManager.setPreferredModel(this.userSelectedModel);
-            }
-            await this.updateConnectionStatus();
-            break;
-          }
-          case 'openApiKeyConfig': {
-            await this.handleOpenApiKeyConfig(message.correlationId);
-            break;
-          }
-          case 'clientError': {
-            logRuntime(`Webview reported client error: ${message.error}`);
-            break;
-          }
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      logRuntime(`onDidReceiveMessage received: command=${message?.command || message?.type || 'unknown'}`);
+      switch (message.command) {
+        case 'submitPrompt': {
+          logRuntime(`submitPrompt received. text length=${message.text?.length}, correlationId=${message.correlationId}`);
+          await this.handleUserPrompt(message.text, message.correlationId, message.clientTrace);
+          break;
         }
-      })
-    );
+        case 'traceStageP': {
+          logTrace({
+            stage: 'P',
+            stageName: 'Final assistant message renders in webview',
+            correlationId: message.correlationId || 'unknown',
+            timestamp: new Date().toISOString(),
+            success: true,
+          });
+          break;
+        }
+        case 'cancelTurn': {
+          this.handleCancelTurn(message.correlationId);
+          break;
+        }
+        case 'scanWorkspace': {
+          await this.handleScanWorkspace(message.correlationId);
+          break;
+        }
+        case 'acceptPatch': {
+          await this.handlePatchDecision(message.patchId, 'accept');
+          break;
+        }
+        case 'rejectPatch': {
+          await this.handlePatchDecision(message.patchId, 'reject');
+          break;
+        }
+        case 'revertPatch': {
+          await this.handleRevertPatch(message.patchId);
+          break;
+        }
+        case 'toggleHunk': {
+          this.patchManager.setHunkDecision(message.patchId, message.hunkId, message.accepted);
+          this.refreshStagedPatchesUI();
+          break;
+        }
+        case 'reviewPatchDiff': {
+          await this.handleReviewDiff(message.patchId);
+          break;
+        }
+        case 'refreshStatus': {
+          logRuntime('Received refreshStatus command from webview');
+          await this.updateConnectionStatus();
+          break;
+        }
+        case 'selectModel': {
+          this.userSelectedModel = message.modelName;
+          this.activeSessionId = undefined;
+          if (this.connectionManager) {
+            this.connectionManager.setPreferredModel(this.userSelectedModel);
+          }
+          await this.updateConnectionStatus();
+          break;
+        }
+        case 'openApiKeyConfig': {
+          await this.handleOpenApiKeyConfig(message.correlationId);
+          break;
+        }
+        case 'clientError': {
+          logRuntime(`Webview reported client error: ${message.error}`);
+          break;
+        }
+      }
+    });
 
     if (this.connectionManager) {
       this.connectionManager.setStatusCallback((status: DetailedConnectionStatus) => {
         logRuntime(`connectionManager.onStatusChange callback fired: connected=${status.connected}`);
         this.postStatusUpdate(status);
       });
-      try {
-        await this.connectionManager.checkStatus();
-      } catch (err) {
-        logRuntime(`Initial checkStatus notice: ${err}`);
-      }
     }
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-
     this.updateConnectionStatus();
   }
 
@@ -848,10 +840,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
     const lastStatus = this.connectionManager?.getLastStatus();
     logRuntime(`_getHtmlForWebview called. lastStatus=${JSON.stringify(lastStatus)}`);
 
-    let initialBadgeClass = 'pill degraded';
-    let initialBadgeText = 'Connecting...';
-    let initialModelText = 'Resolving...';
-    let initialModelOptions = '<option value="">Resolving available models...</option>';
+    let initialBadgeClass = 'pill online';
+    let initialBadgeText = 'Online (8790 + 9099)';
+    let initialModelText = 'Gemini 3.8 Flash (Google)';
+    let initialModelOptions = '<option value="google-gemini/gemini-3-8-flash" selected>Gemini 3.8 Flash (Google)</option>';
 
     if (lastStatus) {
       if (lastStatus.connected) {
@@ -889,7 +881,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource}; font-src ${webview.cspSource}; connect-src ${webview.cspSource} http://localhost:8790 http://localhost:9099;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FORGE//SENTINEL</title>
   <style>
@@ -938,10 +930,14 @@ Always explain the purpose, rationale, and expected impact of any changes before
       color: var(--ink-black);
       font-family: -apple-system, BlinkMacSystemFont, "Space Grotesk", "Inter", "Segoe UI", Roboto, sans-serif;
       margin: 0;
-      padding: 10px;
+      padding: 8px;
       font-size: 12px;
       line-height: 1.45;
       overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      box-sizing: border-box;
     }
 
     /* Technical Monospace Elements */
@@ -1136,9 +1132,10 @@ Always explain the purpose, rationale, and expected impact of any changes before
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 290px;
+      flex: 1 1 auto;
+      min-height: 80px;
       overflow-y: auto;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       padding-right: 2px;
     }
     .message {
@@ -1693,7 +1690,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
       display: flex;
       flex-direction: column;
       gap: 6px;
-      margin-top: 6px;
+      margin-top: auto;
+      flex-shrink: 0;
     }
     textarea#promptInput {
       width: 100%;
@@ -1847,895 +1845,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
   </div>
 
   <script nonce="${nonce}">
-    window.addEventListener('error', function(event) {
-      console.error('[Sentinel Error]', event.error || event.message);
-      try {
-        if (window.vscode && typeof window.vscode.postMessage === 'function') {
-          window.vscode.postMessage({
-            command: 'clientError',
-            error: String(event.message || event.error) + ' at ' + (event.filename || '') + ':' + (event.lineno || ''),
-            correlationId: currentCorrelationId
-          });
-        }
-      } catch (e) {}
-      const banner = document.getElementById('runtimeErrorBanner');
-      if (banner) {
-        banner.style.display = 'block';
-        banner.textContent = 'Script Error: ' + (event.message || String(event.error));
-      }
-    });
-
-    let vscode;
-    try {
-      if (typeof acquireVsCodeApi === 'function') {
-        vscode = acquireVsCodeApi();
-        window._vscodeApi = vscode;
-      } else if (window._vscodeApi) {
-        vscode = window._vscodeApi;
-      }
-    } catch (e) {
-      vscode = window._vscodeApi;
-    }
-    window.vscode = vscode;
-
-    const chat = document.getElementById('chat');
-    const promptInput = document.getElementById('promptInput');
-    const sendBtn = document.getElementById('sendBtn');
-    const cancelBtn = document.getElementById('cancelBtn');
-    const scanBtn = document.getElementById('scanBtn');
-    const statusBadge = document.getElementById('statusBadge');
-    const modelPill = document.getElementById('modelPill');
-    const modelSelect = document.getElementById('modelSelect');
-    const configKeysBtn = document.getElementById('configKeysBtn');
-    const stagedContainer = document.getElementById('stagedContainer');
-    const proofContainer = document.getElementById('proofContainer');
-    const stepPipeline = document.getElementById('stepPipeline');
-
-    let currentStreamingElem = null;
-    let streamBuffer = '';
-    let currentCorrelationId = null;
-
-    function postClientAction(actionName, payload) {
-      payload = payload || {};
-      const correlationId = 'act_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-      console.log('[Sentinel Client Action]', actionName, correlationId, payload);
-      try {
-        if (vscode && typeof vscode.postMessage === 'function') {
-          vscode.postMessage(Object.assign({
-            command: actionName,
-            correlationId: correlationId,
-            timestamp: new Date().toISOString()
-          }, payload));
-          return correlationId;
-        } else {
-          console.error('[Sentinel] vscode.postMessage is not available for action:', actionName);
-          return null;
-        }
-      } catch (err) {
-        console.error('[Sentinel] postClientAction failed:', err);
-        return null;
-      }
-    }
-
-    function executeTurn() {
-      const now = new Date().toISOString();
-      const correlationId = 'turn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-      currentCorrelationId = correlationId;
-
-      const text = promptInput ? promptInput.value.trim() : '';
-      if (!text) {
-        if (promptInput) {
-          promptInput.style.borderColor = 'var(--signal-red)';
-          promptInput.placeholder = 'Please enter an instruction or click a task chip above...';
-          setTimeout(() => {
-            promptInput.style.borderColor = '';
-            promptInput.placeholder = "Enter instructions (e.g. 'Add built-in flask config command...'). Use @file and @symbol for surgical precision.";
-          }, 2500);
-        }
-        return;
-      }
-
-      // Stage A: Button click handler invoked
-      const traceA = {
-        stage: 'A',
-        stageName: 'Button click handler invoked',
-        correlationId: correlationId,
-        timestamp: now,
-        success: true
-      };
-
-      // Stage B: Prompt value successfully retrieved
-      const traceB = {
-        stage: 'B',
-        stageName: 'Prompt value successfully retrieved',
-        correlationId: correlationId,
-        timestamp: new Date().toISOString(),
-        success: true,
-        details: { promptLength: text.length }
-      };
-
-      // Enter visible executing state immediately
-      sendBtn.disabled = true;
-      sendBtn.textContent = 'EXECUTING...';
-      sendBtn.style.opacity = '0.7';
-
-      // Clear input
-      promptInput.value = '';
-
-      // Stage C: Request payload constructed
-      const clientTrace = [traceA, traceB];
-      const traceC = {
-        stage: 'C',
-        stageName: 'Request payload constructed',
-        correlationId: correlationId,
-        timestamp: new Date().toISOString(),
-        success: true,
-        details: { command: 'submitPrompt', textLength: text.length }
-      };
-      clientTrace.push(traceC);
-
-      // Stage D: Webview postMessage invoked
-      const traceD = {
-        stage: 'D',
-        stageName: 'Webview postMessage invoked',
-        correlationId: correlationId,
-        timestamp: new Date().toISOString(),
-        success: true
-      };
-      clientTrace.push(traceD);
-
-      postClientAction('submitPrompt', {
-        text: text,
-        clientTrace: clientTrace
-      });
-    }
-
-    sendBtn?.addEventListener('click', (e) => {
-      e.preventDefault();
-      executeTurn();
-    });
-
-    promptInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        executeTurn();
-      }
-    });
-
-    cancelBtn?.addEventListener('click', (e) => {
-      e.preventDefault();
-      postClientAction('cancelTurn', { command: 'cancelTurn' });
-    });
-
-    scanBtn?.addEventListener('click', (e) => {
-      e.preventDefault();
-      postClientAction('scanWorkspace', { command: 'scanWorkspace' });
-    });
-
-    configKeysBtn?.addEventListener('click', (e) => {
-      e.preventDefault();
-      postClientAction('openApiKeyConfig', { command: 'openApiKeyConfig' });
-    });
-
-    modelSelect?.addEventListener('change', () => {
-      if (modelSelect.value) {
-        postClientAction('selectModel', { command: 'selectModel', modelName: modelSelect.value });
-      }
-    });
-
-    document.querySelectorAll('.quick-chip').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        const p = el.getAttribute('data-prompt');
-        if (p && promptInput) {
-          promptInput.value = p;
-          executeTurn();
-        }
-      });
-    });
-
-    document.addEventListener('click', (e) => {
-      const target = e.target;
-      if (!target) return;
-      const chip = target.closest ? target.closest('.quick-chip') : null;
-      if (chip && chip !== target) {
-        const p = chip.getAttribute('data-prompt');
-        if (p && promptInput) {
-          promptInput.value = p;
-          executeTurn();
-        }
-      }
-    });
-
-    window.addEventListener('message', (event) => {
-      const msg = event.data;
-      switch (msg.type) {
-        case 'statusUpdate': {
-          const badge = document.getElementById('statusBadge');
-          const pill = document.getElementById('modelPill');
-          const select = document.getElementById('modelSelect');
-          if (badge) {
-            if (msg.connected) {
-              badge.className = 'pill online';
-              badge.textContent = 'Online (8790 + 9099)';
-            } else if (msg.state === 'degraded_mcp') {
-              badge.className = 'pill degraded';
-              badge.textContent = 'MCP Offline (9099)';
-            } else if (msg.state === 'degraded_daemon') {
-              badge.className = 'pill offline';
-              badge.textContent = 'Daemon Offline (8790)';
-            } else {
-              badge.className = 'pill offline';
-              badge.textContent = 'Offline (8790 + 9099)';
-            }
-          }
-          if (pill && msg.activeModel) {
-            pill.textContent = msg.activeModel;
-          }
-
-          if (select) {
-            if (msg.models && msg.models.length > 0) {
-              const currentSelection = msg.modelName || select.value;
-              select.innerHTML = '';
-              for (const m of msg.models) {
-                if (!m.isAvailable) continue;
-                const opt = document.createElement('option');
-                opt.value = m.name;
-                opt.textContent = m.displayName;
-                if (m.name === currentSelection || (!currentSelection && m.name.includes('gemini-3-8-flash'))) {
-                  opt.selected = true;
-                }
-                select.appendChild(opt);
-              }
-            }
-            if (select.children.length === 0 && (msg.activeModel || msg.modelName)) {
-              select.innerHTML = '';
-              const opt = document.createElement('option');
-              opt.value = msg.modelName || 'google-gemini/gemini-3-8-flash';
-              opt.textContent = msg.activeModel || 'Gemini 3.8 Flash (Google)';
-              opt.selected = true;
-              select.appendChild(opt);
-            }
-          }
-          break;
-        }
-
-        case 'executionStep':
-          updateStepPipeline(msg.step);
-          break;
-
-        case 'turnStarted':
-          sendBtn.disabled = true;
-          cancelBtn.style.display = 'inline-block';
-          streamBuffer = '';
-          currentStreamingElem = document.createElement('div');
-          currentStreamingElem.className = 'message assistant';
-          currentStreamingElem.innerHTML = '<div class="message-tag">Sentinel Agent</div><div class="stream-body"></div>';
-          chat.appendChild(currentStreamingElem);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-
-        case 'turnEnded':
-          sendBtn.disabled = false;
-          sendBtn.textContent = 'Execute Turn';
-          sendBtn.style.opacity = '1';
-          cancelBtn.style.display = 'none';
-          if (currentStreamingElem) {
-            const body = currentStreamingElem.querySelector('.stream-body');
-            if (body && streamBuffer) {
-              body.innerHTML = renderMarkdown(streamBuffer, { isStreaming: false });
-              attachCopyListeners(body);
-            }
-          }
-          currentStreamingElem = null;
-          streamBuffer = '';
-          if (currentCorrelationId) {
-            vscode.postMessage({ command: 'traceStageP', correlationId: currentCorrelationId });
-            currentCorrelationId = null;
-          }
-          break;
-
-        case 'tokenDelta':
-          if (!currentStreamingElem) {
-            currentStreamingElem = document.createElement('div');
-            currentStreamingElem.className = 'message assistant';
-            currentStreamingElem.innerHTML = '<div class="message-tag">Sentinel Agent</div><div class="stream-body"></div>';
-            chat.appendChild(currentStreamingElem);
-          }
-          streamBuffer += msg.delta;
-          const body = currentStreamingElem.querySelector('.stream-body');
-          if (body) {
-            const isNearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
-            body.innerHTML = renderMarkdown(streamBuffer, { isStreaming: true });
-            attachCopyListeners(body);
-            if (isNearBottom) {
-              chat.scrollTop = chat.scrollHeight;
-            }
-          }
-          break;
-
-        case 'userMessage':
-          const userElem = document.createElement('div');
-          userElem.className = 'message user';
-          userElem.innerHTML = '<div class="message-tag">Developer</div><div style="white-space:pre-wrap;">' + escapeHtml(msg.text) + '</div>';
-          chat.appendChild(userElem);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-
-        case 'toolCall':
-          if (currentStreamingElem) {
-            const curBody = currentStreamingElem.querySelector('.stream-body');
-            if (curBody && streamBuffer) {
-              curBody.innerHTML = renderMarkdown(streamBuffer, { isStreaming: false });
-              attachCopyListeners(curBody);
-            }
-            currentStreamingElem = null;
-            streamBuffer = '';
-          }
-          const toolBox = document.createElement('div');
-          toolBox.className = 'tool-box';
-          const callArgsStr = typeof msg.call.args === 'object' ? JSON.stringify(msg.call.args, null, 2) : String(msg.call.args || '');
-          toolBox.innerHTML = 
-            '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">' +
-              '<span>⚙️ <strong>[Tool Call]</strong> <code>' + escapeHtml(msg.call.name) + '</code></span>' +
-              '<span class="badge" style="background:var(--tint-yellow); color:#854d0e; border:1px solid var(--bauhaus-yellow); font-size:8.5px;">RUNNING</span>' +
-            '</div>' +
-            '<details style="font-size:10px; cursor:pointer;"><summary style="color:var(--ink-muted);">Arguments</summary><pre style="margin:3px 0; padding:4px 6px; background:var(--paper-white); border:1px solid var(--border-subtle); overflow-x:auto; font-family:var(--font-mono);">' + escapeHtml(callArgsStr) + '</pre></details>';
-          chat.appendChild(toolBox);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-
-        case 'toolResponse':
-          const toolRespBox = document.createElement('div');
-          toolRespBox.className = 'tool-response-box';
-          const respContent = typeof msg.resp.result === 'object' ? JSON.stringify(msg.resp.result, null, 2) : String(msg.resp.result || 'Success');
-          toolRespBox.innerHTML =
-            '<div class="tool-response-header">' +
-              '<span>✅ <strong>[Tool Result]</strong></span>' +
-              '<span class="badge" style="background:var(--tint-green); color:var(--verified-green); border:1px solid var(--verified-green); font-size:8.5px;">COMPLETED</span>' +
-            '</div>' +
-            '<details style="cursor:pointer;" open>' +
-              '<summary style="padding:4px 8px; font-size:9.5px; font-weight:700; color:var(--ink-muted);">Output Payload</summary>' +
-              '<div class="tool-response-content">' + escapeHtml(respContent) + '</div>' +
-            '</details>';
-          chat.appendChild(toolRespBox);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-
-        case 'contextReceipt':
-          renderContextReceipt(msg.receipt);
-          break;
-
-        case 'stagedPatches':
-          renderStagedPatches(msg.patches);
-          break;
-
-        case 'proofOfChange':
-          renderProofOfChange(msg.report);
-          break;
-
-        case 'mriSummary': {
-          const mriElem = document.createElement('div');
-          mriElem.className = 'message assistant';
-          const s = msg.summary || {};
-          const langList = s.languages ? Object.entries(s.languages).map(function(entry) { return entry[0] + ': ' + entry[1]; }).join(', ') : 'N/A';
-          mriElem.innerHTML = '<div class="message-tag">Codebase MRI Analysis</div>' +
-            '<div style="font-weight:700; margin-bottom:6px; color:var(--ink-black);">Workspace Structure Indexed</div>' +
-            '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:11px; margin-bottom:8px;">' +
-              '<div style="background:var(--paper-white); padding:6px; border:1px solid var(--border-bold); box-shadow:var(--shadow-sm);">' +
-                '<div style="color:var(--ink-muted); font-size:10px;">TOTAL FILES</div>' +
-                '<div style="font-size:16px; font-weight:800;">' + (s.totalFiles ?? 0) + '</div>' +
-              '</div>' +
-              '<div style="background:var(--paper-white); padding:6px; border:1px solid var(--border-bold); box-shadow:var(--shadow-sm);">' +
-                '<div style="color:var(--ink-muted); font-size:10px;">TOTAL SYMBOLS</div>' +
-                '<div style="font-size:16px; font-weight:800;">' + (s.totalSymbols ?? 0) + '</div>' +
-              '</div>' +
-            '</div>' +
-            '<div style="font-size:11px; color:var(--ink-muted);"><strong>Languages:</strong> ' + escapeHtml(langList) + '</div>';
-          chat.appendChild(mriElem);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-        }
-
-        case 'log':
-          const logElem = document.createElement('div');
-          logElem.style.fontSize = '10.5px';
-          logElem.style.color = 'var(--ink-muted)';
-          logElem.style.padding = '1px 4px';
-          logElem.textContent = '• ' + msg.message;
-          chat.appendChild(logElem);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-
-        case 'error':
-          const errElem = document.createElement('div');
-          errElem.className = 'message';
-          errElem.style.background = 'var(--tint-red)';
-          errElem.style.borderColor = 'var(--signal-red)';
-          errElem.style.color = 'var(--signal-red)';
-          errElem.innerHTML = '<div class="message-tag" style="color:var(--signal-red);">Error Trapped by Sentinel</div><div>' + escapeHtml(msg.message) + '</div>';
-          chat.appendChild(errElem);
-          chat.scrollTop = chat.scrollHeight;
-          break;
-      }
-    });
-
-    function updateStepPipeline(step) {
-      document.querySelectorAll('.step-node').forEach(n => {
-        n.classList.remove('active');
-      });
-
-      // Special handling for completed / proven / failed / cancelled
-      if (step === 'completed') {
-        const compNode = document.getElementById('step-completed');
-        if (compNode) {
-          compNode.style.display = 'inline-block';
-          compNode.classList.add('active');
-        }
-      } else if (step === 'failed') {
-        const failNode = document.getElementById('step-failed');
-        if (failNode) {
-          failNode.style.display = 'inline-block';
-          failNode.classList.add('active');
-        }
-      } else if (step === 'cancelled') {
-        const cancNode = document.getElementById('step-cancelled');
-        if (cancNode) {
-          cancNode.style.display = 'inline-block';
-          cancNode.classList.add('active');
-        }
-      } else {
-        const target = document.getElementById('step-' + step);
-        if (target) {
-          target.classList.add('active');
-        }
-      }
-    }
-
-    function renderContextReceipt(r) {
-      const receiptBox = document.createElement('div');
-      receiptBox.className = 'receipt-box';
-      const totalBudget = r.tokenBudget || 16000;
-      const codeBudget = r.codeBudget || Math.round(totalBudget * 0.7);
-      const retrievedCodeTok = r.retrievedCodeTokens ?? r.totalTokensUsed ?? 0;
-      const estimatedReqTok = r.estimatedRequestTokens ?? retrievedCodeTok;
-      const reservedOutTok = r.reservedOutputTokens ?? (r.reservedCapacity ? r.reservedCapacity.output : 0);
-      const safetyMarginTok = r.safetyMarginTokens ?? (r.reservedCapacity ? (r.reservedCapacity.safetyMargin || 0) : 0);
-      const totalCapacityTok = r.totalContextCapacity ?? totalBudget;
-      const codePct = Math.min(100, Math.round((retrievedCodeTok / codeBudget) * 100));
-
-      let selectedList = r.selectedFiles.map(f => 
-        '<li style="margin-bottom:3px;"><code>' + escapeHtml(f.filePath) + '</code> <span class="badge risk-low" style="font-size:8.5px;">' + f.estimatedTokens + ' tok</span> (score: ' + f.score + ') — <span style="color:var(--ink-muted);">' + escapeHtml(f.relevanceRationale) + '</span></li>'
-      ).join('');
-
-      let excludedList = r.excludedFiles.map(e =>
-        '<li style="margin-bottom:2px;"><code>' + escapeHtml(e.filePath) + '</code>: ' + escapeHtml(e.exclusionReason) + '</li>'
-      ).join('');
-
-      const breakdownHtml =
-        '<div class="breakdown-grid">' +
-          '<span><strong>1. Retrieved Code:</strong> ' + retrievedCodeTok + ' tok</span>' +
-          '<span><strong>2. Est. Complete Req:</strong> ' + estimatedReqTok + ' tok</span>' +
-          '<span><strong>3. Reserved Output:</strong> ' + reservedOutTok + ' tok</span>' +
-          '<span><strong>4. Safety Margin:</strong> ' + safetyMarginTok + ' tok</span>' +
-          '<span style="grid-column:span 2; margin-top:2px; font-weight:700;">5. Total Capacity: ' + totalCapacityTok.toLocaleString() + ' tok (Ceiling: ' + totalBudget.toLocaleString() + ' tok)</span>' +
-        '</div>';
-
-      receiptBox.innerHTML = 
-        '<div class="receipt-title">' +
-          '<span>📋 Context Selection Receipt</span>' +
-          '<span style="color:var(--electric-cobalt);">' + retrievedCodeTok + ' / ' + codeBudget + ' code tok (' + codePct + '%)</span>' +
-        '</div>' +
-        '<div class="token-meter"><div class="token-meter-fill" style="width:' + codePct + '%;"></div></div>' +
-        breakdownHtml +
-        '<details style="cursor:pointer;"><summary><strong>' + r.selectedFiles.length + ' High-Relevance Selected Files</strong></summary>' +
-          '<ul style="margin:4px 0; padding-left:16px;">' + selectedList + '</ul>' +
-        '</details>' +
-        (r.excludedFiles.length > 0 ? 
-          '<details style="cursor:pointer; margin-top:4px;"><summary style="color:var(--ink-muted);">' + r.excludedFiles.length + ' Excluded Candidates</summary>' +
-            '<ul style="margin:4px 0; padding-left:16px; color:var(--ink-muted);">' + excludedList + '</ul>' +
-          '</details>' : '');
-
-      chat.appendChild(receiptBox);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    function renderStagedPatches(patches) {
-      stagedContainer.innerHTML = '';
-      if (!patches || patches.length === 0) return;
-
-      const title = document.createElement('div');
-      title.style.fontWeight = '800';
-      title.style.fontSize = '11px';
-      title.style.textTransform = 'uppercase';
-      title.style.letterSpacing = '0.04em';
-      title.style.margin = '10px 0 6px 0';
-      title.style.color = 'var(--ink-black)';
-      title.textContent = 'Proposed Surgical Patches (' + patches.length + ')';
-      stagedContainer.appendChild(title);
-
-      for (const p of patches) {
-        const item = document.createElement('div');
-        item.className = 'staged-patch';
-
-        const riskClass = 'badge risk-' + (p.riskLevel || 'low');
-        const statusClass = 'badge ' + p.status;
-
-        let hunkMarkup = '';
-        if (p.hunks && p.hunks.length > 0) {
-          hunkMarkup = '<div class="hunk-list">';
-          p.hunks.forEach((h, idx) => {
-            const checked = h.accepted !== false ? 'checked' : '';
-            hunkMarkup += '<div class="hunk-row">' +
-              '<span>' + escapeHtml(h.header) + '</span>' +
-              '<label style="cursor:pointer; font-weight:700;"><input type="checkbox" class="hunk-toggle" data-patch="' + p.patchId + '" data-hunk="' + h.hunkId + '" ' + checked + '> Include</label>' +
-            '</div>';
-          });
-          hunkMarkup += '</div>';
-        }
-
-        item.innerHTML = 
-          '<div class="patch-header">' +
-            '<span class="file-chip">' + escapeHtml(p.filePath) + '</span>' +
-            '<div style="display:flex; gap:4px;">' +
-              '<span class="' + riskClass + '">' + (p.riskLevel || 'low') + ' risk</span>' +
-              '<span class="' + statusClass + '">' + p.status + '</span>' +
-            '</div>' +
-          '</div>' +
-          '<div class="patch-purpose">' + escapeHtml(p.purpose) + '</div>' +
-          hunkMarkup +
-          '<div class="btn-group">' +
-            '<button class="secondary review-btn" data-id="' + p.patchId + '">Review Diff</button>' +
-            (p.status === 'applied' ? 
-              '<button class="danger revert-btn" data-id="' + p.patchId + '">Revert Patch</button>' :
-              '<button class="success accept-btn" data-id="' + p.patchId + '">Apply Patch</button><button class="danger reject-btn" data-id="' + p.patchId + '">Reject</button>'
-            ) +
-          '</div>';
-
-        item.querySelector('.review-btn').addEventListener('click', () => {
-          vscode.postMessage({ command: 'reviewPatchDiff', patchId: p.patchId });
-        });
-
-        const acceptBtn = item.querySelector('.accept-btn');
-        if (acceptBtn) {
-          acceptBtn.addEventListener('click', () => {
-            vscode.postMessage({ command: 'acceptPatch', patchId: p.patchId });
-          });
-        }
-
-        const rejectBtn = item.querySelector('.reject-btn');
-        if (rejectBtn) {
-          rejectBtn.addEventListener('click', () => {
-            vscode.postMessage({ command: 'rejectPatch', patchId: p.patchId });
-          });
-        }
-
-        const revertBtn = item.querySelector('.revert-btn');
-        if (revertBtn) {
-          revertBtn.addEventListener('click', () => {
-            vscode.postMessage({ command: 'revertPatch', patchId: p.patchId });
-          });
-        }
-
-        item.querySelectorAll('.hunk-toggle').forEach(chk => {
-          chk.addEventListener('change', (e) => {
-            vscode.postMessage({
-              command: 'toggleHunk',
-              patchId: e.target.getAttribute('data-patch'),
-              hunkId: e.target.getAttribute('data-hunk'),
-              accepted: e.target.checked
-            });
-          });
-        });
-
-        stagedContainer.appendChild(item);
-      }
-    }
-
-    function renderProofOfChange(report) {
-      proofContainer.innerHTML = '';
-      const box = document.createElement('div');
-      box.className = 'proof-card';
-
-      let badgeStyle = 'background:var(--tint-green); color:var(--verified-green); border-color:var(--verified-green);';
-      if (report.status === 'read_only_completed') {
-        badgeStyle = 'background:var(--tint-cobalt); color:var(--electric-cobalt); border-color:var(--electric-cobalt);';
-      } else if (report.status === 'failed') {
-        badgeStyle = 'background:var(--tint-red); color:var(--signal-red); border-color:var(--signal-red);';
-      } else if (report.status === 'partial') {
-        badgeStyle = 'background:var(--tint-yellow); color:#854d0e; border-color:var(--bauhaus-yellow);';
-      } else if (report.status === 'unverified') {
-        badgeStyle = 'background:var(--paper-neutral); color:var(--ink-muted); border-color:var(--border-bold);';
-      }
-
-      let testRows = '';
-      if (report.status === 'read_only_completed') {
-        testRows = '<div style="color:var(--electric-cobalt); font-weight:600;">✓ Read-only architecture inquiry (test suite execution not required).</div>';
-      } else if (report.testResults && report.testResults.length > 0) {
-        testRows = report.testResults.map(r => {
-          const color = r.status === 'passed' ? 'var(--verified-green)' : (r.status === 'failed' ? 'var(--signal-red)' : 'var(--bauhaus-yellow)');
-          return '<div class="test-result-row"><span>' + escapeHtml(r.testName) + '</span><strong style="color:' + color + ';">' + r.status.toUpperCase() + '</strong></div>';
-        }).join('');
-      } else {
-        testRows = '<div style="color:var(--ink-muted);">No test executions recorded.</div>';
-      }
-
-      const displayStatus = report.status === 'read_only_completed' ? 'READ-ONLY COMPLETED' : report.status.toUpperCase();
-
-      box.innerHTML = 
-        '<div class="proof-header">' +
-          '<span>🛡️ Proof-Carrying Code Report</span>' +
-          '<span class="badge" style="' + badgeStyle + '">' + displayStatus + '</span>' +
-        '</div>' +
-        '<div style="margin-bottom:6px;"><strong>Modified Files (' + report.filesModified.length + '):</strong> ' + (report.filesModified.join(', ') || 'None') + '</div>' +
-        '<div style="margin-bottom:6px;"><strong>Patches:</strong> ' + report.patchesAccepted + ' accepted / ' + report.patchesProposed + ' proposed</div>' +
-        '<div style="font-weight:700; margin-top:8px; margin-bottom:4px; text-transform:uppercase; font-size:10px;">Verification Results:</div>' +
-        '<div style="background:var(--paper-warm); border:1px solid var(--border-subtle); padding:6px 8px; border-radius:3px;">' + testRows + '</div>' +
-        (report.remainingRisks && report.remainingRisks.length > 0 ? 
-          '<div style="margin-top:6px; color:#854d0e; background:var(--tint-yellow); border:1px solid var(--bauhaus-yellow); padding:5px 7px; border-radius:3px;">⚠️ <strong>Advisory:</strong> ' + escapeHtml(report.remainingRisks.join('; ')) + '</div>' : '');
-
-      proofContainer.appendChild(box);
-    }
-
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
-
-    function sanitizeUrl(url) {
-      if (!url) return '#';
-      const trimmed = url.trim();
-      const lower = trimmed.toLowerCase();
-      if (
-        lower.startsWith('javascript:') ||
-        lower.startsWith('data:') ||
-        lower.startsWith('vbscript:')
-      ) {
-        return '#unsafe-link-blocked';
-      }
-      return trimmed;
-    }
-
-    function parseInline(text) {
-      let res = text;
-      res = res.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-      res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-      res = res.replace(/___([^_]+)___/g, '<strong><em>$1</em></strong>');
-      res = res.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-      res = res.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-      res = res.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-      res = res.replace(/\b_([^_]+)_\b/g, '<em>$1</em>');
-      res = res.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
-        const safeUrl = sanitizeUrl(url);
-        return '<a href="' + safeUrl + '" class="bauhaus-link" target="_blank" rel="noopener noreferrer">' + label + '</a>';
-      });
-      return res;
-    }
-
-    function parseListItemContent(content) {
-      const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
-      if (taskMatch) {
-        const isChecked = taskMatch[1].toLowerCase() === 'x';
-        return (
-          '<label class="task-list-item">' +
-          '<input type="checkbox" disabled ' + (isChecked ? 'checked' : '') + ' class="task-checkbox"/> ' +
-          '<span>' + parseInline(taskMatch[2]) + '</span>' +
-          '</label>'
-        );
-      }
-      return parseInline(content);
-    }
-
-    function parseListBlock(listText) {
-      const lines = listText.split('\n');
-      const isOrdered = /^\s*\d+\.\s+/.test(lines[0]);
-      const tag = isOrdered ? 'ol' : 'ul';
-      const listClass = isOrdered ? 'bauhaus-ol' : 'bauhaus-ul';
-
-      let html = '<' + tag + ' class="' + listClass + '">';
-      let inNested = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const isIndented = /^(\s{2,}|\t+)/.test(line);
-
-        if (isIndented) {
-          if (!inNested) {
-            html += '<ul class="bauhaus-ul-nested">';
-            inNested = true;
-          }
-          const itemContent = line.replace(/^\s*[-*+]?\s*/, '').replace(/^\s*\d+\.\s*/, '');
-          html += '<li>' + parseListItemContent(itemContent) + '</li>';
-        } else {
-          if (inNested) {
-            html += '</ul>';
-            inNested = false;
-          }
-          const itemContent = line.replace(/^\s*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '');
-          html += '<li>' + parseListItemContent(itemContent) + '</li>';
-        }
-      }
-
-      if (inNested) {
-        html += '</ul>';
-      }
-
-      html += '</' + tag + '>';
-      return html;
-    }
-
-    function renderMarkdown(markdown, options) {
-      if (!markdown || typeof markdown !== 'string') return '';
-      const isStreaming = !!(options && options.isStreaming);
-      const codeBlocks = [];
-      const inlineCodes = [];
-
-      let text = markdown;
-
-      const BT3 = '\\x60\\x60\\x60';
-      const BT1 = '\\x60';
-
-      // 1. Fenced Code Blocks
-      text = text.replace(new RegExp(BT3 + '([a-zA-Z0-9_+#.-]*)\\n([\\s\\S]*?)(?:' + BT3 + '|$)', 'g'), (match, lang, code) => {
-        const isUnclosed = isStreaming && !match.endsWith(BT3);
-        const cleanLang = (lang || 'code').trim().toLowerCase();
-        const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
-        const escapedCode = escapeHtml(code.endsWith('\n') ? code.slice(0, -1) : code);
-
-        const blockHtml = 
-          '<div class="code-block-wrapper' + (isUnclosed ? ' streaming-code' : '') + '">' +
-            '<div class="code-block-header">' +
-              '<span class="code-lang-tag">' + displayLang + (isUnclosed ? ' • GENERATING' : '') + '</span>' +
-              '<button class="copy-code-btn" type="button" data-code="' + escapeHtml(code) + '">Copy</button>' +
-            '</div>' +
-            '<pre class="code-pre"><code class="code-content language-' + cleanLang + '">' + escapedCode + '</code></pre>' +
-          '</div>';
-
-        codeBlocks.push(blockHtml);
-        return '\n\n%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%\n\n';
-      });
-
-      // 2. Inline Code
-      text = text.replace(new RegExp(BT1 + '([^' + BT1 + '\\n]+)' + BT1, 'g'), (_match, code) => {
-        const escaped = escapeHtml(code);
-        inlineCodes.push('<code class="inline-code">' + escaped + '</code>');
-        return '%%INLINECODE_' + (inlineCodes.length - 1) + '%%';
-      });
-
-      // 3. Horizontal Rules
-      text = text.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr class="bauhaus-divider"/>');
-
-      // 4. Tables
-      text = text.replace(/(?:^|\n)((?:\|[^\n]+\|(?:\r?\n|$))+)/g, (match) => {
-        const lines = match.trim().split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
-        if (lines.length < 2) return match;
-        if (!/^\|[- :|]+\|$/.test(lines[1])) return match;
-
-        const headers = lines[0]
-          .split('|')
-          .slice(1, -1)
-          .map((h) => '<th>' + parseInline(h.trim()) + '</th>')
-          .join('');
-
-        const bodyRows = lines
-          .slice(2)
-          .map((row) => {
-            const cells = row
-              .split('|')
-              .slice(1, -1)
-              .map((c) => '<td>' + parseInline(c.trim()) + '</td>')
-              .join('');
-            return '<tr>' + cells + '</tr>';
-          })
-          .join('');
-
-        return (
-          '\n\n<div class="table-container">' +
-          '<table class="bauhaus-table">' +
-          '<thead><tr>' + headers + '</tr></thead>' +
-          '<tbody>' + bodyRows + '</tbody>' +
-          '</table>' +
-          '</div>\n\n'
-        );
-      });
-
-      // 5. Blockquotes
-      text = text.replace(/(?:^|\n)(?:>[\t ]?.*(?:\n>[\t ]?.*)*)/g, (match) => {
-        const content = match
-          .trim()
-          .split('\n')
-          .map((line) => line.replace(/^>[\t ]?/, ''))
-          .join('\n');
-        return '\n\n<blockquote class="bauhaus-quote">' + parseInline(content) + '</blockquote>\n\n';
-      });
-
-      // 6. Split into blocks
-      const blocks = text.split(/\n{2,}/);
-      const renderedBlocks = [];
-
-      for (const block of blocks) {
-        const trimmed = block.trim();
-        if (!trimmed) continue;
-
-        if (
-          trimmed.startsWith('%%CODEBLOCK_') ||
-          trimmed.startsWith('<div class="table-container">') ||
-          trimmed.startsWith('<blockquote') ||
-          trimmed.startsWith('<hr class="bauhaus-divider"/>')
-        ) {
-          renderedBlocks.push(trimmed);
-          continue;
-        }
-
-        const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-        if (headingMatch) {
-          const level = headingMatch[1].length;
-          const content = parseInline(headingMatch[2].trim());
-          renderedBlocks.push('<h' + level + ' class="heading-h' + level + '">' + content + '</h' + level + '>');
-          continue;
-        }
-
-        const isList = /^(?:[-*+]|\d+\.)\s+/.test(trimmed);
-        if (isList) {
-          renderedBlocks.push(parseListBlock(trimmed));
-          continue;
-        }
-
-        const paragraphLines = trimmed.split('\n').map((l) => parseInline(l)).join('<br/>');
-        renderedBlocks.push('<p class="message-paragraph">' + paragraphLines + '</p>');
-      }
-
-      let finalHtml = renderedBlocks.join('\n');
-
-      finalHtml = finalHtml.replace(/%%INLINECODE_(\d+)%%/g, (_match, idx) => {
-        return inlineCodes[Number(idx)] || '';
-      });
-
-      finalHtml = finalHtml.replace(/%%CODEBLOCK_(\d+)%%/g, (_match, idx) => {
-        return codeBlocks[Number(idx)] || '';
-      });
-
-      return finalHtml;
-    }
-
-    function attachCopyListeners(container) {
-      if (!container) return;
-      const buttons = container.querySelectorAll('.copy-code-btn');
-      buttons.forEach((btn) => {
-        if (btn.getAttribute('data-has-listener')) return;
-        btn.setAttribute('data-has-listener', 'true');
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const code = btn.getAttribute('data-code') || btn.closest('.code-block-wrapper')?.querySelector('code')?.textContent || '';
-          navigator.clipboard.writeText(code).then(() => {
-            const orig = btn.textContent;
-            btn.textContent = 'COPIED!';
-            btn.style.background = 'var(--tint-green)';
-            btn.style.borderColor = 'var(--verified-green)';
-            setTimeout(() => {
-              btn.textContent = orig;
-              btn.style.background = 'var(--paper-warm)';
-              btn.style.borderColor = 'var(--border-bold)';
-            }, 2000);
-          }).catch((err) => {
-            console.error('Copy failed:', err);
-          });
-        });
-      });
-    }
-
-    // Multi-tier handshake: ensure immediate request and bounded retries in case frame was initializing
-    function requestStatus() {
-      postClientAction('refreshStatus');
-    }
-    requestStatus();
-    setTimeout(requestStatus, 150);
-    setTimeout(requestStatus, 500);
-    setTimeout(requestStatus, 1200);
+${webviewClientScript}
   </script>
 </body>
 </html>`;

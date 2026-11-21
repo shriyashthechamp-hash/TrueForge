@@ -925,19 +925,22 @@ Always explain the purpose, rationale, and expected impact of any changes before
     *, *::before, *::after {
       box-sizing: border-box;
     }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      margin: 0;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
     body {
       background-color: var(--paper-warm);
       color: var(--ink-black);
       font-family: -apple-system, BlinkMacSystemFont, "Space Grotesk", "Inter", "Segoe UI", Roboto, sans-serif;
-      margin: 0;
       padding: 8px;
       font-size: 12px;
       line-height: 1.45;
-      overflow-x: hidden;
       display: flex;
       flex-direction: column;
-      height: 100vh;
-      box-sizing: border-box;
     }
 
     /* Technical Monospace Elements */
@@ -955,6 +958,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
       padding-bottom: 8px;
       border-bottom: 2px solid var(--border-bold);
       margin-bottom: 8px;
+      flex-shrink: 0;
     }
     .header-top {
       display: flex;
@@ -1050,6 +1054,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-sm);
       flex-wrap: wrap;
+      flex-shrink: 0;
     }
     .model-label {
       font-size: 9.5px;
@@ -1090,6 +1095,7 @@ Always explain the purpose, rationale, and expected impact of any changes before
       border-radius: 4px;
       margin-bottom: 8px;
       box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
     }
     .step-node {
       flex: 1 1 calc(25% - 4px);
@@ -1125,6 +1131,26 @@ Always explain the purpose, rationale, and expected impact of any changes before
       border-color: var(--border-bold);
     }
 
+    /* Custom Bauhaus Paper Protocol Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--paper-warm);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-subtle);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--ink-muted);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-subtle) var(--paper-warm);
+    }
+
     /* ==========================================================================
        CONVERSATION / CHAT STREAM CONTAINER
        ========================================================================== */
@@ -1132,19 +1158,39 @@ Always explain the purpose, rationale, and expected impact of any changes before
       display: flex;
       flex-direction: column;
       gap: 8px;
-      flex: 1 1 auto;
-      min-height: 80px;
+      flex: 1 1 0;
+      min-height: 40px;
       overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
       margin-bottom: 6px;
-      padding-right: 2px;
+      padding: 2px 4px 4px 2px;
+    }
+    .chat-container > * {
+      flex-shrink: 0;
+      min-height: fit-content;
+      max-width: 100%;
     }
     .message {
-      padding: 9px 11px;
+      flex-shrink: 0;
+      min-height: fit-content;
+      padding: 10px 12px;
       border-radius: 4px;
       font-size: 11.5px;
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-sm);
       word-wrap: break-word;
+      overflow-wrap: break-word;
+      line-height: 1.5;
+    }
+    .stream-body {
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--ink-black);
+    }
+    .stream-body.streaming {
+      white-space: pre-wrap;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .message.user {
       background: var(--tint-cobalt);
@@ -1380,6 +1426,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     /* Tool Call Cards */
     .tool-box {
+      flex-shrink: 0;
+      min-height: fit-content;
       background: var(--paper-secondary);
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-sm);
@@ -1396,6 +1444,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     /* Tool Response Card */
     .tool-response-box {
+      flex-shrink: 0;
+      min-height: fit-content;
       background: var(--paper-white);
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-sm);
@@ -1426,6 +1476,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
 
     /* Context Auction Receipt Box */
     .receipt-box {
+      flex-shrink: 0;
+      min-height: fit-content;
       background: var(--paper-white);
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-md);
@@ -1542,6 +1594,8 @@ Always explain the purpose, rationale, and expected impact of any changes before
        PROOF-CARRYING CODE REPORT CARD
        ========================================================================== */
     .proof-card {
+      flex-shrink: 0;
+      min-height: fit-content;
       background: var(--paper-white);
       border: 2px solid var(--verified-green);
       box-shadow: 3px 3px 0px var(--verified-green);
@@ -1700,10 +1754,11 @@ Always explain the purpose, rationale, and expected impact of any changes before
       border: 2px solid var(--border-bold);
       box-shadow: var(--shadow-sm);
       border-radius: 4px;
-      padding: 8px 10px;
+      padding: 7px 9px;
       font-size: 11.5px;
       resize: vertical;
-      min-height: 60px;
+      min-height: 48px;
+      max-height: 120px;
       line-height: 1.4;
       outline: none;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -1827,10 +1882,9 @@ Always explain the purpose, rationale, and expected impact of any changes before
         </div>
       </div>
     </div>
+    <div id="stagedContainer"></div>
+    <div id="proofContainer"></div>
   </div>
-
-  <div id="stagedContainer"></div>
-  <div id="proofContainer"></div>
 
   <!-- COMMAND INPUT & ACTIONS -->
   <div class="input-area">
